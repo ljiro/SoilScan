@@ -13,7 +13,7 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 
-const API_ENDPOINT = 'https://ljiro-soilscan-api.hf.space/api/predict'; // Updated API endpoint
+const API_ENDPOINT = 'https://huggingface.co/spaces/soilscanMLtraining/SoilScan-apihttps://ljiro-soilscan-api.hf.space/api/predict'; // Updated API endpoint
 
 const HomeScreen = () => {
   const [image, setImage] = useState(null);
