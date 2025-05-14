@@ -1,0 +1,1 @@
+{"version":3,"file":"types.js","sourceRoot":"","sources":["../../src/camera/types.ts"],"names":[],"mappings":"","sourcesContent":["// Rotation in degrees.\nexport type Rotation = 0|90|180|270|360|- 80|- 180|- 270;\n"]}

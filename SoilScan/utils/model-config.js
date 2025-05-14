@@ -32,7 +32,7 @@ export const MUNSELL_COLORS = {
   '10YR 3/3': {
     name: 'Dark Brown',
     hex: '#5C4033',
-    description: 'Dark brown soils (Value 3, Chroma 3-4) indicate excellent tilth and biological activity. The slightly higher chroma suggests good aeration and root development.',
+    description: 'Dark brown soils (Value 4, Chroma 3-4) indicate excellent tilth and biological activity. The slightly higher chroma suggests good aeration and root development.',
     range: '10YR 3/2-3/3',
     properties: ['High CEC', 'Good Tilth', 'Well-Aerated']
   },

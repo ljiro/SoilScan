@@ -8,97 +8,111 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Linking
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 
+const API_ENDPOINT = 'https://ljiro-soilscan-api.hf.space/api/predict'; // Updated API endpoint
+
 const HomeScreen = () => {
   const [image, setImage] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [results, setResults] = useState([
-    {
-      color: 'Dark Brown',
-      hexCode: '#5C4033',
-      confidence: 92,
-      description: 'Rich in organic matter, excellent for most crops',
-      properties: ['High Fertility', 'Good Drainage', 'Moisture Retentive'],
-    },
-    {
-      color: 'Reddish Brown',
-      hexCode: '#A52A2A',
-      confidence: 85,
-      description: 'Contains iron oxides, typically well-drained',
-      properties: ['Moderate Fertility', 'Good Aeration'],
-    },
-    {
-      color: 'Light Brown',
-      hexCode: '#C4A484',
-      confidence: 78,
-      description: 'Sandy composition, may need amendments',
-      properties: ['Fast Draining', 'Lower Nutrients'],
-    },
-    {
-      color: 'Black',
-      hexCode: '#3D3D3D',
-      confidence: 65,
-      description: 'Very high organic content, excellent moisture retention',
-      properties: ['High Organic Matter', 'Rich Nutrients'],
-    },
-    {
-      color: 'Gray',
-      hexCode: '#808080',
-      confidence: 45,
-      description: 'May indicate poor drainage or compaction',
-      properties: ['Poor Aeration', 'Possible Waterlogging'],
-    },
-  ]);
+  const [results, setResults] = useState([]);
+  const [selectedColor, setSelectedColor] = useState(null);
 
-  const handleCapture = () => {
-    launchCamera(
-      {
-        mediaType: 'photo',
-        quality: 0.8,
-      },
-      (response) => {
-        if (response.didCancel) {
-          console.log('User cancelled image picker');
-        } else if (response.error) {
-          console.log('ImagePicker Error: ', response.error);
-        } else {
-          setIsAnalyzing(true);
-          setImage(response.assets[0].uri);
-          
-          // Simulate analysis
-          setTimeout(() => {
-            setIsAnalyzing(false);
-          }, 2000);
-        }
+  const uploadImageToAPI = async (uri) => {
+    setIsAnalyzing(true);
+    
+    try {
+      // Create form data
+      const formData = new FormData();
+      formData.append('file', {
+        uri: uri,
+        type: 'image/jpeg',
+        name: 'soil_image.jpg',
+      });
+
+      // Make API request
+      const response = await fetch(API_ENDPOINT, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed with status ${response.status}`);
       }
-    );
+
+      const data = await response.json();
+      
+      // Transform API response to match our expected format
+      if (data.predictions && data.predictions.length > 0) {
+        const formattedResults = data.predictions.map(pred => ({
+          name: pred.color_name,
+          hex: pred.hex_color,
+          description: pred.description,
+          properties: pred.properties || [],
+          confidence: Math.round(pred.confidence * 100),
+          munsellCode: pred.munsell_code
+        }));
+        
+        setResults(formattedResults);
+        setSelectedColor(formattedResults[0]);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to analyze soil color. Please try again.');
+      console.error('API Error:', error);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
-  const handleUpload = () => {
-    launchImageLibrary(
-      {
-        mediaType: 'photo',
+  const handleCapture = async () => {
+    try {
+      const response = await launchCamera({ 
+        mediaType: 'photo', 
         quality: 0.8,
-      },
-      (response) => {
-        if (response.didCancel) {
-          console.log('User cancelled image picker');
-        } else if (response.error) {
-          console.log('ImagePicker Error: ', response.error);
-        } else {
-          setIsAnalyzing(true);
-          setImage(response.assets[0].uri);
-          
-          // Simulate analysis
-          setTimeout(() => {
-            setIsAnalyzing(false);
-          }, 2000);
-        }
+        maxWidth: 1200,
+        maxHeight: 1200
+      });
+
+      if (response.assets?.[0]?.uri) {
+        setImage(response.assets[0].uri);
+        setResults([]);
+        setSelectedColor(null);
+        await uploadImageToAPI(response.assets[0].uri);
       }
-    );
+    } catch (error) {
+      Alert.alert('Error', error.message);
+    }
+  };
+
+  const handleUpload = async () => {
+    try {
+      const response = await launchImageLibrary({ 
+        mediaType: 'photo', 
+        quality: 0.8,
+        maxWidth: 1200,
+        maxHeight: 1200
+      });
+
+      if (response.assets?.[0]?.uri) {
+        setImage(response.assets[0].uri);
+        setResults([]);
+        setSelectedColor(null);
+        await uploadImageToAPI(response.assets[0].uri);
+      }
+    } catch (error) {
+      Alert.alert('Error', error.message);
+    }
+  };
+
+  const openMunsellGuide = () => {
+    Linking.openURL('https://www.nrcs.usda.gov/resources/education-and-teaching-materials/soil-color-chart');
   };
 
   return (
@@ -138,67 +152,103 @@ const HomeScreen = () => {
         </View>
       </View>
       
-      {/* Results Section */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Icon name="palette" size={20} color="#5D9C59" style={styles.sectionIcon} />
-          <Text style={styles.sectionTitle}>Color Analysis Results</Text>
-        </View>
-        
-        {results.map((item, index) => (
-          <View key={index} style={styles.soilCard}>
+      {/* Primary Result Section */}
+      {selectedColor && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Icon name="tint" size={20} color="#5D9C59" style={styles.sectionIcon} />
+            <Text style={styles.sectionTitle}>Primary Soil Color</Text>
+          </View>
+          
+          <View style={styles.primaryResultCard}>
             <View style={styles.colorHeader}>
-              <View style={[styles.colorIndicator, { backgroundColor: item.hexCode }]} />
-              <Text style={styles.soilType}>{item.color}</Text>
+              <View style={[styles.colorSwatch, { backgroundColor: selectedColor.hex }]} />
+              <View>
+                <Text style={styles.primaryColorName}>{selectedColor.name}</Text>
+                <Text style={styles.munsellCode}>{selectedColor.munsellCode}</Text>
+              </View>
             </View>
             
             <View style={styles.confidenceContainer}>
-              <Text style={styles.confidenceValue}>{Math.round(item.confidence)}%</Text>
+              <Text style={styles.confidenceValue}>{selectedColor.confidence}% Match</Text>
               <View style={styles.confidenceBar}>
-                <View style={[styles.confidenceFill, { width: `${item.confidence}%` }]} />
+                <View style={[styles.confidenceFill, { width: `${selectedColor.confidence}%` }]} />
               </View>
             </View>
             
-            {item.description ? <Text style={styles.description}>{item.description}</Text> : null}
+            <Text style={styles.description}>{selectedColor.description}</Text>
             
-            {item.properties.length > 0 && (
-              <View style={styles.propertiesContainer}>
-                {item.properties.map((prop, i) => (
-                  <View key={i} style={styles.propertyTag}>
-                    <Text style={styles.propertyText}>{prop}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
+            <View style={styles.propertiesContainer}>
+              {selectedColor.properties.map((prop, i) => (
+                <View key={i} style={styles.propertyTag}>
+                  <Text style={styles.propertyText}>{prop}</Text>
+                </View>
+              ))}
+            </View>
+            
+            <TouchableOpacity 
+              style={styles.learnMoreButton} 
+              onPress={openMunsellGuide}
+            >
+              <Text style={styles.learnMoreText}>Learn about Munsell Colors</Text>
+              <Icon name="external-link" size={14} color="#5D9C59" />
+            </TouchableOpacity>
           </View>
-        ))}
-      </View>
-      
-      {/* History Section */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Icon name="history" size={20} color="#5D9C59" style={styles.sectionIcon} />
-          <Text style={styles.sectionTitle}>Scan History</Text>
         </View>
-        
-        <HistoryItem color="#5C4033" type="Dark Brown" date="Today, 10:23 AM" />
-        <HistoryItem color="#A52A2A" type="Reddish Brown" date="Yesterday, 4:45 PM" />
-        <HistoryItem color="#C4A484" type="Light Brown" date="March 28, 2023" />
+      )}
+      
+      {/* Alternative Results Section */}
+      {results.length > 1 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Icon name="palette" size={20} color="#5D9C59" style={styles.sectionIcon} />
+            <Text style={styles.sectionTitle}>Alternative Matches</Text>
+          </View>
+          
+          {results.slice(1).map((item, index) => (
+            <TouchableOpacity 
+              key={index} 
+              style={styles.soilCard}
+              onPress={() => setSelectedColor(item)}
+            >
+              <View style={styles.colorHeader}>
+                <View style={[styles.colorIndicator, { backgroundColor: item.hex }]} />
+                <View>
+                  <Text style={styles.soilType}>{item.name}</Text>
+                  <Text style={styles.munsellCode}>{item.munsellCode}</Text>
+                </View>
+              </View>
+              
+              <View style={styles.confidenceContainer}>
+                <Text style={styles.confidenceValue}>{item.confidence}%</Text>
+                <View style={styles.confidenceBar}>
+                  <View style={[styles.confidenceFill, { width: `${item.confidence}%` }]} />
+                </View>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+      
+      {/* Help Section */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>How to Get Best Results</Text>
+        <View style={styles.tipItem}>
+          <Icon name="lightbulb-o" size={16} color="#5D9C59" />
+          <Text style={styles.tipText}>Photograph soil in natural daylight</Text>
+        </View>
+        <View style={styles.tipItem}>
+          <Icon name="lightbulb-o" size={16} color="#5D9C59" />
+          <Text style={styles.tipText}>Use moist (not wet) soil for accurate color</Text>
+        </View>
+        <View style={styles.tipItem}>
+          <Icon name="lightbulb-o" size={16} color="#5D9C59" />
+          <Text style={styles.tipText}>Remove surface debris before photographing</Text>
+        </View>
       </View>
     </ScrollView>
   );
 };
-
-const HistoryItem = ({ color, type, date }) => (
-  <View style={styles.historyItem}>
-    <View style={[styles.historyColor, { backgroundColor: color }]} />
-    <View style={styles.historyInfo}>
-      <Text style={styles.historyType}>{type}</Text>
-      <Text style={styles.historyDate}>{date}</Text>
-    </View>
-    <Icon name="chevron-right" size={16} color="#666" />
-  </View>
-);
 
 const styles = StyleSheet.create({
   container: {
@@ -312,16 +362,32 @@ const styles = StyleSheet.create({
   buttonIcon: {
     marginRight: 8,
   },
-  soilCard: {
-    backgroundColor: '#C7E8CA',
+  primaryResultCard: {
+    backgroundColor: '#EDF7ED',
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#5D9C59',
+  },
+  soilCard: {
+    backgroundColor: '#F5F5F5',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
   },
   colorHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 8,
+  },
+  colorSwatch: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
   },
   colorIndicator: {
     width: 24,
@@ -331,10 +397,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.1)',
   },
-  soilType: {
-    fontSize: 18,
+  primaryColorName: {
+    fontSize: 20,
     fontWeight: '700',
     color: '#1A3C40',
+  },
+  soilType: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1A3C40',
+  },
+  munsellCode: {
+    fontSize: 14,
+    color: '#666',
+    fontFamily: 'monospace',
+    marginTop: 2,
   },
   confidenceContainer: {
     flexDirection: 'row',
@@ -345,6 +422,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginRight: 8,
     color: '#1A3C40',
+    fontSize: 14,
   },
   confidenceBar: {
     flex: 1,
@@ -359,8 +437,9 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   description: {
-    marginTop: 8,
+    marginVertical: 8,
     color: '#1A3C40',
+    lineHeight: 20,
   },
   propertiesContainer: {
     flexDirection: 'row',
@@ -370,43 +449,40 @@ const styles = StyleSheet.create({
   propertyTag: {
     backgroundColor: 'white',
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 6,
     borderRadius: 25,
     marginRight: 8,
     marginBottom: 8,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
     elevation: 1,
   },
   propertyText: {
     fontSize: 12,
     fontWeight: '500',
-  },
-  historyItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.05)',
-  },
-  historyColor: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    marginRight: 12,
-  },
-  historyInfo: {
-    flex: 1,
-  },
-  historyType: {
-    fontWeight: '600',
     color: '#1A3C40',
   },
-  historyDate: {
-    fontSize: 12,
-    color: 'rgba(0,0,0,0.6)',
+  learnMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingVertical: 8,
+  },
+  learnMoreText: {
+    color: '#5D9C59',
+    marginRight: 6,
+    fontWeight: '500',
+  },
+  tipItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  tipText: {
+    marginLeft: 8,
+    color: '#1A3C40',
   },
 });
 
