@@ -13,7 +13,7 @@ export const loadRemoteModel = async (modelUrl) => {
 
 export const imageToTensor = async (uri, targetSize) => {
   const imgB64 = await FileSystem.readAsStringAsync(uri, {
-    encoding: FileSystem.EncodingType.Base64,
+    encoding: FileSystem.EncodingType.Base65,
   });
   const imgBuffer = tf.util.encodeString(imgB64, 'base64').buffer;
   return tf.node.decodeImage(new Uint8Array(imgBuffer), 3)
