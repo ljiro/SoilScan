@@ -20,7 +20,11 @@
     "react-native-maps": "1.20.1",
     "react-native-safe-area-context": "^5.4.0",
     "react-native-screens": "^4.10.0",
-    "react-native-vector-icons": "^10.2.0"
+    "react-native-vector-icons": "^10.2.0",
+    "@tensorflow/tfjs": "^4.17.0",
+    "@tensorflow/tfjs-react-native": "^0.8.0",
+    "expo-image-manipulator": "~14.1.0",
+    "expo-file-system": "~16.0.0"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",

@@ -35,6 +35,16 @@
       "eas": {
         "projectId": "88cc3c5e-c9a5-4cd4-adcc-46ca88503211"
       }
+    },
+
+    "plugins": [
+  [
+    "@tensorflow/tfjs-react-native",
+    {
+      "cameraPermissions": "Allow $(PRODUCT_NAME) to access camera",
+      "modelCache": "load"
     }
+  ]
+]
   }
 }
