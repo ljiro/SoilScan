@@ -17,22 +17,39 @@ const HomeScreen = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [results, setResults] = useState([
     {
-      type: 'Nitrogen',
-      confidence: 87,
-      description: 'Might experience excessive vegetative growth at the expense of fruit or flower production...',
-      properties: ['High Density', 'Rich Nutrients'],
+      color: 'Dark Brown',
+      hexCode: '#5C4033',
+      confidence: 92,
+      description: 'Rich in organic matter, excellent for most crops',
+      properties: ['High Fertility', 'Good Drainage', 'Moisture Retentive'],
     },
     {
-      type: 'Phosphorous',
-      confidence: 12,
-      description: '',
-      properties: [],
+      color: 'Reddish Brown',
+      hexCode: '#A52A2A',
+      confidence: 85,
+      description: 'Contains iron oxides, typically well-drained',
+      properties: ['Moderate Fertility', 'Good Aeration'],
     },
     {
-      type: 'Potassium',
-      confidence: 87,
-      description: '',
-      properties: [],
+      color: 'Light Brown',
+      hexCode: '#C4A484',
+      confidence: 78,
+      description: 'Sandy composition, may need amendments',
+      properties: ['Fast Draining', 'Lower Nutrients'],
+    },
+    {
+      color: 'Black',
+      hexCode: '#3D3D3D',
+      confidence: 65,
+      description: 'Very high organic content, excellent moisture retention',
+      properties: ['High Organic Matter', 'Rich Nutrients'],
+    },
+    {
+      color: 'Gray',
+      hexCode: '#808080',
+      confidence: 45,
+      description: 'May indicate poor drainage or compaction',
+      properties: ['Poor Aeration', 'Possible Waterlogging'],
     },
   ]);
 
@@ -103,7 +120,7 @@ const HomeScreen = () => {
           {isAnalyzing && (
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="large" color="#5D9C59" />
-              <Text style={styles.loadingText}>Analyzing soil sample...</Text>
+              <Text style={styles.loadingText}>Analyzing soil color...</Text>
             </View>
           )}
         </View>
@@ -124,13 +141,16 @@ const HomeScreen = () => {
       {/* Results Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Icon name="seedling" size={20} color="#5D9C59" style={styles.sectionIcon} />
-          <Text style={styles.sectionTitle}>Analysis Results</Text>
+          <Icon name="palette" size={20} color="#5D9C59" style={styles.sectionIcon} />
+          <Text style={styles.sectionTitle}>Color Analysis Results</Text>
         </View>
         
         {results.map((item, index) => (
           <View key={index} style={styles.soilCard}>
-            <Text style={styles.soilType}>{item.type}</Text>
+            <View style={styles.colorHeader}>
+              <View style={[styles.colorIndicator, { backgroundColor: item.hexCode }]} />
+              <Text style={styles.soilType}>{item.color}</Text>
+            </View>
             
             <View style={styles.confidenceContainer}>
               <Text style={styles.confidenceValue}>{Math.round(item.confidence)}%</Text>
@@ -161,9 +181,9 @@ const HomeScreen = () => {
           <Text style={styles.sectionTitle}>Scan History</Text>
         </View>
         
-        <HistoryItem color="#A67B5B" type="Sandy Loam" date="Today, 10:23 AM" />
-        <HistoryItem color="#7B5B3E" type="Clay Soil" date="Yesterday, 4:45 PM" />
-        <HistoryItem color="#D2B48C" type="Sandy Soil" date="March 28, 2023" />
+        <HistoryItem color="#5C4033" type="Dark Brown" date="Today, 10:23 AM" />
+        <HistoryItem color="#A52A2A" type="Reddish Brown" date="Yesterday, 4:45 PM" />
+        <HistoryItem color="#C4A484" type="Light Brown" date="March 28, 2023" />
       </View>
     </ScrollView>
   );
@@ -298,11 +318,23 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 16,
   },
+  colorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  colorIndicator: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+  },
   soilType: {
     fontSize: 18,
     fontWeight: '700',
     color: '#1A3C40',
-    marginBottom: 8,
   },
   confidenceContainer: {
     flexDirection: 'row',
