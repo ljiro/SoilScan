@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,12 +8,13 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
-  Linking
+  Linking,
+  Platform
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import * as ImagePicker from 'expo-image-picker';
 
-const API_ENDPOINT = 'https://soil-api.hf.space/api/predict';
+const API_ENDPOINT = 'https://soilscanmltraining-soilscan-api.hf.space/predict';
 
 const HomeScreen = () => {
   const [image, setImage] = useState(null);
@@ -21,19 +22,33 @@ const HomeScreen = () => {
   const [results, setResults] = useState([]);
   const [selectedColor, setSelectedColor] = useState(null);
 
+  useEffect(() => {
+    (async () => {
+      if (Platform.OS !== 'web') {
+        const { status: cameraStatus } = await ImagePicker.requestCameraPermissionsAsync();
+        const { status: libraryStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (cameraStatus !== 'granted' || libraryStatus !== 'granted') {
+          Alert.alert(
+            'Permissions Required',
+            'Camera and media library permissions are required to use this app.'
+          );
+        }
+      }
+    })();
+  }, []);
+
   const uploadImageToAPI = async (uri) => {
     setIsAnalyzing(true);
-    
+
     try {
-      // Create form data
       const formData = new FormData();
       formData.append('file', {
         uri: uri,
         type: 'image/jpeg',
         name: 'soil_image.jpg',
       });
+;
 
-      // Make API request
       const response = await fetch(API_ENDPOINT, {
         method: 'POST',
         body: formData,
@@ -48,22 +63,21 @@ const HomeScreen = () => {
       }
 
       const data = await response.json();
-      
-      // Process API response
+
       if (data.predictions && data.predictions.length > 0) {
-        // Filter out predictions with 0 confidence
-        const validPredictions = data.predictions.filter(pred => pred.confidence > 0);
-        
-        // Format results
-        const formattedResults = validPredictions.map(pred => ({
+        const validPredictions = data.predictions.filter(
+          (pred) => pred.confidence > 0
+        );
+
+        const formattedResults = validPredictions.map((pred) => ({
           name: pred.color_name,
           hex: pred.hex_color,
           description: pred.description,
           properties: pred.properties || [],
           confidence: Math.round(pred.confidence * 100),
-          munsellCode: pred.munsell_code
+          munsellCode: pred.munsell_code,
         }));
-        
+
         setResults(formattedResults);
         setSelectedColor(formattedResults[0]);
       }
@@ -77,18 +91,19 @@ const HomeScreen = () => {
 
   const handleCapture = async () => {
     try {
-      const response = await launchCamera({ 
-        mediaType: 'photo', 
+      const pickerResult = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.8,
-        maxWidth: 1200,
-        maxHeight: 1200
+        allowsEditing: true,
+        aspect: [4, 3],
       });
 
-      if (response.assets?.[0]?.uri) {
-        setImage(response.assets[0].uri);
+      if (!pickerResult.canceled && pickerResult.assets && pickerResult.assets.length > 0) {
+        const imageUri = pickerResult.assets[0].uri;
+        setImage(imageUri);
         setResults([]);
         setSelectedColor(null);
-        await uploadImageToAPI(response.assets[0].uri);
+        await uploadImageToAPI(imageUri);
       }
     } catch (error) {
       Alert.alert('Error', error.message);
@@ -97,18 +112,19 @@ const HomeScreen = () => {
 
   const handleUpload = async () => {
     try {
-      const response = await launchImageLibrary({ 
-        mediaType: 'photo', 
+      const pickerResult = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.8,
-        maxWidth: 1200,
-        maxHeight: 1200
+        allowsEditing: true,
+        aspect: [4, 3],
       });
 
-      if (response.assets?.[0]?.uri) {
-        setImage(response.assets[0].uri);
+      if (!pickerResult.canceled && pickerResult.assets && pickerResult.assets.length > 0) {
+        const imageUri = pickerResult.assets[0].uri;
+        setImage(imageUri);
         setResults([]);
         setSelectedColor(null);
-        await uploadImageToAPI(response.assets[0].uri);
+        await uploadImageToAPI(imageUri);
       }
     } catch (error) {
       Alert.alert('Error', error.message);
@@ -116,25 +132,31 @@ const HomeScreen = () => {
   };
 
   const openMunsellGuide = () => {
-    Linking.openURL('https://www.nrcs.usda.gov/resources/education-and-teaching-materials/soil-color-chart');
+    Linking.openURL(
+      'https://www.nrcs.usda.gov/resources/education-and-teaching-materials/soil-color-chart'
+    );
   };
 
   return (
     <ScrollView style={styles.container}>
-      {/* Scan Section */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Scan Soil Sample</Text>
-        
+
         <View style={styles.scanPreview}>
           {image ? (
             <Image source={{ uri: image }} style={styles.image} />
           ) : (
             <View style={styles.placeholder}>
-              <Icon name="camera" size={48} color="#1A3C40" style={styles.placeholderIcon} />
+              <Icon
+                name="camera"
+                size={48}
+                color="#1A3C40"
+                style={styles.placeholderIcon}
+              />
               <Text style={styles.placeholderText}>No image captured</Text>
             </View>
           )}
-          
+
           {isAnalyzing && (
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="large" color="#5D9C59" />
@@ -142,46 +164,54 @@ const HomeScreen = () => {
             </View>
           )}
         </View>
-        
+
         <View style={styles.buttonContainer}>
           <TouchableOpacity style={styles.primaryButton} onPress={handleCapture}>
             <Icon name="camera" size={18} color="white" style={styles.buttonIcon} />
             <Text style={styles.buttonText}>Capture</Text>
           </TouchableOpacity>
-          
+
           <TouchableOpacity style={styles.outlineButton} onPress={handleUpload}>
             <Icon name="upload" size={18} color="#5D9C59" style={styles.buttonIcon} />
             <Text style={[styles.buttonText, { color: '#5D9C59' }]}>Upload</Text>
           </TouchableOpacity>
         </View>
       </View>
-      
-      {/* Primary Result Section */}
+
       {selectedColor && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Icon name="tint" size={20} color="#5D9C59" style={styles.sectionIcon} />
             <Text style={styles.sectionTitle}>Primary Soil Color</Text>
           </View>
-          
+
           <View style={styles.primaryResultCard}>
             <View style={styles.colorHeader}>
-              <View style={[styles.colorSwatch, { backgroundColor: selectedColor.hex }]} />
+              <View
+                style={[styles.colorSwatch, { backgroundColor: selectedColor.hex }]}
+              />
               <View>
                 <Text style={styles.primaryColorName}>{selectedColor.name}</Text>
                 <Text style={styles.munsellCode}>{selectedColor.munsellCode}</Text>
               </View>
             </View>
-            
+
             <View style={styles.confidenceContainer}>
-              <Text style={styles.confidenceValue}>{selectedColor.confidence}% Match</Text>
+              <Text style={styles.confidenceValue}>
+                {selectedColor.confidence}% Match
+              </Text>
               <View style={styles.confidenceBar}>
-                <View style={[styles.confidenceFill, { width: `${selectedColor.confidence}%` }]} />
+                <View
+                  style={[
+                    styles.confidenceFill,
+                    { width: `${selectedColor.confidence}%` },
+                  ]}
+                />
               </View>
             </View>
-            
+
             <Text style={styles.description}>{selectedColor.description}</Text>
-            
+
             <View style={styles.propertiesContainer}>
               {selectedColor.properties.map((prop, i) => (
                 <View key={i} style={styles.propertyTag}>
@@ -189,52 +219,59 @@ const HomeScreen = () => {
                 </View>
               ))}
             </View>
-            
-            <TouchableOpacity 
-              style={styles.learnMoreButton} 
+
+            <TouchableOpacity
+              style={styles.learnMoreButton}
               onPress={openMunsellGuide}
             >
-              <Text style={styles.learnMoreText}>Learn about Munsell Colors</Text>
+              <Text style={styles.learnMoreText}>
+                Learn about Munsell Colors
+              </Text>
               <Icon name="external-link" size={14} color="#5D9C59" />
             </TouchableOpacity>
           </View>
         </View>
       )}
-      
-      {/* Alternative Results Section */}
+
       {results.length > 1 && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Icon name="palette" size={20} color="#5D9C59" style={styles.sectionIcon} />
             <Text style={styles.sectionTitle}>Alternative Matches</Text>
           </View>
-          
+
           {results.slice(1).map((item, index) => (
-            <TouchableOpacity 
-              key={index} 
+            <TouchableOpacity
+              key={index}
               style={styles.soilCard}
               onPress={() => setSelectedColor(item)}
             >
               <View style={styles.colorHeader}>
-                <View style={[styles.colorIndicator, { backgroundColor: item.hex }]} />
+                <View
+                  style={[styles.colorIndicator, { backgroundColor: item.hex }]}
+                />
                 <View>
                   <Text style={styles.soilType}>{item.name}</Text>
                   <Text style={styles.munsellCode}>{item.munsellCode}</Text>
                 </View>
               </View>
-              
+
               <View style={styles.confidenceContainer}>
                 <Text style={styles.confidenceValue}>{item.confidence}%</Text>
                 <View style={styles.confidenceBar}>
-                  <View style={[styles.confidenceFill, { width: `${item.confidence}%` }]} />
+                  <View
+                    style={[
+                      styles.confidenceFill,
+                      { width: `${item.confidence}%` },
+                    ]}
+                  />
                 </View>
               </View>
             </TouchableOpacity>
           ))}
         </View>
       )}
-      
-      {/* Help Section */}
+
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>How to Get Best Results</Text>
         <View style={styles.tipItem}>
@@ -243,11 +280,15 @@ const HomeScreen = () => {
         </View>
         <View style={styles.tipItem}>
           <Icon name="lightbulb-o" size={16} color="#5D9C59" />
-          <Text style={styles.tipText}>Use moist (not wet) soil for accurate color</Text>
+          <Text style={styles.tipText}>
+            Use moist (not wet) soil for accurate color
+          </Text>
         </View>
         <View style={styles.tipItem}>
           <Icon name="lightbulb-o" size={16} color="#5D9C59" />
-          <Text style={styles.tipText}>Remove surface debris before photographing</Text>
+          <Text style={styles.tipText}>
+            Remove surface debris before photographing
+          </Text>
         </View>
       </View>
     </ScrollView>
@@ -487,7 +528,7 @@ const styles = StyleSheet.create({
   tipText: {
     marginLeft: 8,
     color: '#1A3C40',
-  }
+  },
 });
 
 export default HomeScreen;
