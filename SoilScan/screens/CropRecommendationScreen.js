@@ -1,18 +1,21 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 
 const CropRecommendationScreen = () => {
   const [soilParams, setSoilParams] = useState({
-    nitrogen: '',
-    phosphorus: '',
-    potassium: '',
-    pH: '',
-    moisture: '',
-    temperature: ''
+    N: '',
+    P: '',
+    K: '',
+    temperature: '',
+    humidity: '',
+    ph: '',
+    rainfall: ''
   });
   const [recommendations, setRecommendations] = useState([]);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleInputChange = (name, value) => {
     setSoilParams(prev => ({
@@ -21,16 +24,86 @@ const CropRecommendationScreen = () => {
     }));
   };
 
-  const getRecommendations = () => {
-    // This would be replaced with actual API call or algorithm
-    const mockRecommendations = [
-      { name: 'Corn', suitability: 'Highly Suitable', icon: 'leaf' },
-      { name: 'Wheat', suitability: 'Moderately Suitable', icon: 'wheat' },
-      { name: 'Soybeans', suitability: 'Suitable', icon: 'tree' },
-      { name: 'Rice', suitability: 'Marginally Suitable', icon: 'tint' }
-    ];
-    setRecommendations(mockRecommendations);
-    setIsSubmitted(true);
+  const getRecommendations = async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Validate inputs
+      if (!soilParams.N || !soilParams.P || !soilParams.K || 
+          !soilParams.ph || !soilParams.temperature || 
+          !soilParams.humidity || !soilParams.rainfall) {
+        throw new Error('Please fill all fields');
+      }
+
+      // Prepare data for API call
+      const inputData = {
+        N: parseFloat(soilParams.N),
+        P: parseFloat(soilParams.P),
+        K: parseFloat(soilParams.K),
+        temperature: parseFloat(soilParams.temperature),
+        humidity: parseFloat(soilParams.humidity),
+        ph: parseFloat(soilParams.ph),
+        rainfall: parseFloat(soilParams.rainfall)
+      };
+
+      // This would be replaced with actual API call to your model endpoint
+      const response = await fetch('YOUR_MODEL_API_ENDPOINT', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(inputData),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to get recommendations');
+      }
+
+      const data = await response.json();
+      
+      // Process model output - adapt this based on your model's response format
+      const processedRecommendations = data.predictions.map((prediction, index) => {
+        // Determine suitability level based on probability or score
+        let suitability;
+        if (prediction.score > 0.8) suitability = 'Highly Suitable';
+        else if (prediction.score > 0.6) suitability = 'Moderately Suitable';
+        else if (prediction.score > 0.4) suitability = 'Suitable';
+        else suitability = 'Marginally Suitable';
+
+        return {
+          name: prediction.crop_name,
+          suitability,
+          score: prediction.score,
+          description: `Predicted suitability score: ${(prediction.score * 100).toFixed(1)}%`,
+          icon: getCropIcon(prediction.crop_name)
+        };
+      });
+
+      setRecommendations(processedRecommendations);
+      setIsSubmitted(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Helper function to get appropriate icons for different crops
+  const getCropIcon = (cropName) => {
+    const icons = {
+      'corn': 'leaf',
+      'wheat': 'wheat',
+      'rice': 'tint',
+      'soybean': 'tree',
+      'barley': 'bar-chart',
+      'potato': 'pagelines',
+      'tomato': 'apple',
+      'cotton': 'th',
+      // Add more crop-icon mappings as needed
+    };
+
+    return icons[cropName.toLowerCase()] || 'pagelines';
   };
 
   return (
@@ -41,80 +114,111 @@ const CropRecommendationScreen = () => {
           <Text style={styles.sectionTitle}>Crop Recommendation</Text>
         </View>
         <Text style={styles.sectionDescription}>
-          Enter your soil test results to get personalized crop recommendations.
+          Enter your soil and weather parameters to get personalized crop recommendations.
         </Text>
 
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Nitrogen (N) ppm</Text>
-          <TextInput
-            style={styles.input}
-            keyboardType="numeric"
-            value={soilParams.nitrogen}
-            onChangeText={(text) => handleInputChange('nitrogen', text)}
-            placeholder="Enter nitrogen level"
-          />
+        {error && (
+          <View style={styles.errorContainer}>
+            <Icon name="exclamation-circle" size={16} color="#D32F2F" />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
+
+        {/* Soil Parameters */}
+        <View style={styles.subSection}>
+          <Text style={styles.subSectionTitle}>Soil Parameters</Text>
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Nitrogen (N) level (ppm)</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="numeric"
+              value={soilParams.N}
+              onChangeText={(text) => handleInputChange('N', text)}
+              placeholder="Enter N level"
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Phosphorus (P) level (ppm)</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="numeric"
+              value={soilParams.P}
+              onChangeText={(text) => handleInputChange('P', text)}
+              placeholder="Enter P level"
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Potassium (K) level (ppm)</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="numeric"
+              value={soilParams.K}
+              onChangeText={(text) => handleInputChange('K', text)}
+              placeholder="Enter K level"
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Soil pH</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="numeric"
+              value={soilParams.ph}
+              onChangeText={(text) => handleInputChange('ph', text)}
+              placeholder="Enter pH (0-14)"
+            />
+          </View>
         </View>
 
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Phosphorus (P) ppm</Text>
-          <TextInput
-            style={styles.input}
-            keyboardType="numeric"
-            value={soilParams.phosphorus}
-            onChangeText={(text) => handleInputChange('phosphorus', text)}
-            placeholder="Enter phosphorus level"
-          />
-        </View>
+        {/* Weather Parameters */}
+        <View style={styles.subSection}>
+          <Text style={styles.subSectionTitle}>Weather Parameters</Text>
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Temperature (°C)</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="numeric"
+              value={soilParams.temperature}
+              onChangeText={(text) => handleInputChange('temperature', text)}
+              placeholder="Enter temperature"
+            />
+          </View>
 
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Potassium (K) ppm</Text>
-          <TextInput
-            style={styles.input}
-            keyboardType="numeric"
-            value={soilParams.potassium}
-            onChangeText={(text) => handleInputChange('potassium', text)}
-            placeholder="Enter potassium level"
-          />
-        </View>
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Humidity (%)</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="numeric"
+              value={soilParams.humidity}
+              onChangeText={(text) => handleInputChange('humidity', text)}
+              placeholder="Enter humidity"
+            />
+          </View>
 
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Soil pH</Text>
-          <TextInput
-            style={styles.input}
-            keyboardType="numeric"
-            value={soilParams.pH}
-            onChangeText={(text) => handleInputChange('pH', text)}
-            placeholder="Enter pH (0-14)"
-          />
-        </View>
-
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Moisture (%)</Text>
-          <TextInput
-            style={styles.input}
-            keyboardType="numeric"
-            value={soilParams.moisture}
-            onChangeText={(text) => handleInputChange('moisture', text)}
-            placeholder="Enter moisture percentage"
-          />
-        </View>
-
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Temperature (°C)</Text>
-          <TextInput
-            style={styles.input}
-            keyboardType="numeric"
-            value={soilParams.temperature}
-            onChangeText={(text) => handleInputChange('temperature', text)}
-            placeholder="Enter average temperature"
-          />
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Rainfall (mm)</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="numeric"
+              value={soilParams.rainfall}
+              onChangeText={(text) => handleInputChange('rainfall', text)}
+              placeholder="Enter rainfall"
+            />
+          </View>
         </View>
 
         <TouchableOpacity 
           style={styles.submitButton}
           onPress={getRecommendations}
+          disabled={isLoading}
         >
-          <Text style={styles.submitButtonText}>Get Recommendations</Text>
+          {isLoading ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text style={styles.submitButtonText}>Get Recommendations</Text>
+          )}
         </TouchableOpacity>
 
         {isSubmitted && (
@@ -140,8 +244,7 @@ const CropRecommendationScreen = () => {
                   <Text style={styles.suitabilityText}>{crop.suitability}</Text>
                 </View>
                 <Text style={styles.cropDescription}>
-                  This crop thrives in soil with {soilParams.nitrogen}ppm nitrogen, 
-                  {soilParams.phosphorus}ppm phosphorus, and pH around {soilParams.pH}.
+                  {crop.description}
                 </Text>
               </View>
             ))}
@@ -167,6 +270,18 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 2,
+  },
+  subSection: {
+    marginBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 10,
+  },
+  subSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1A3C40',
+    marginBottom: 12,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -257,6 +372,18 @@ const styles = StyleSheet.create({
   cropDescription: {
     color: '#666',
     lineHeight: 20,
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  errorText: {
+    color: '#D32F2F',
+    marginLeft: 8,
   },
 });
 

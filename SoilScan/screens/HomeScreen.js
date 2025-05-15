@@ -13,7 +13,7 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 
-const API_ENDPOINT = 'https://-soilscan-api.hf.space/api/predict'; // Updated API endpoint
+const API_ENDPOINT = 'https://soil-api.hf.space/api/predict';
 
 const HomeScreen = () => {
   const [image, setImage] = useState(null);
@@ -49,9 +49,13 @@ const HomeScreen = () => {
 
       const data = await response.json();
       
-      // Transform API response to match our expected format
+      // Process API response
       if (data.predictions && data.predictions.length > 0) {
-        const formattedResults = data.predictions.map(pred => ({
+        // Filter out predictions with 0 confidence
+        const validPredictions = data.predictions.filter(pred => pred.confidence > 0);
+        
+        // Format results
+        const formattedResults = validPredictions.map(pred => ({
           name: pred.color_name,
           hex: pred.hex_color,
           description: pred.description,
@@ -483,7 +487,7 @@ const styles = StyleSheet.create({
   tipText: {
     marginLeft: 8,
     color: '#1A3C40',
-  },
+  }
 });
 
 export default HomeScreen;

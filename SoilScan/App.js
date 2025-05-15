@@ -7,7 +7,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 // Screens
 import HomeScreen from './screens/HomeScreen';
 import GuideScreen from './screens/GuideScreen';
-import MapScreen from './screens/MapScreen';
+import MapScreen from './screens/CropRecommendationScreen';
 import ProfileScreen from './screens/ProfileScreen';
 
 const Tab = createBottomTabNavigator();
@@ -26,7 +26,7 @@ const App = () => {
                 iconName = focused ? 'home' : 'home-outline';
               } else if (route.name === 'Guide') {
                 iconName = focused ? 'book' : 'book-outline';
-              } else if (route.name === 'Map') {
+              } else if (route.name === 'Crop') {
                 iconName = focused ? 'map' : 'map-outline';
               } else if (route.name === 'Profile') {
                 iconName = focused ? 'person' : 'person-outline';
@@ -54,7 +54,7 @@ const App = () => {
         >
           <Tab.Screen name="Home" component={HomeScreen} />
           <Tab.Screen name="Guide" component={GuideScreen} />
-          <Tab.Screen name="Map" component={MapScreen} />
+          <Tab.Screen name="Crop" component={MapScreen} />
           <Tab.Screen name="Profile" component={ProfileScreen} />
         </Tab.Navigator>
       </NavigationContainer>
