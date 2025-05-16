@@ -27,7 +27,10 @@ _Result_
 - Munsell color code
 - Description of soil color
 - soil properties
-![Screenshot_20250516_150332_Expo Go](https://github.com/user-attachments/assets/2de63e5d-0da0-451e-88ef-8b26e649d2cb)
+  
+![Screenshot_20250516_150332_Expo Go](https://github.com/user-attachments/assets/b2eb372c-c96a-4467-9677-1b69eb607890)
+
+
 
 
 
@@ -36,4 +39,7 @@ _Result_
 _Result_
 - Top 5 crop recommendations
 - confidence level in the crop recommendation
-![Screenshot_20250516_150417_Expo Go](https://github.com/user-attachments/assets/82588dc8-00d0-4430-bede-48775594c8d0)
+  
+![Screenshot_20250516_150417_Expo Go](https://github.com/user-attachments/assets/472242c9-df5f-4278-9297-b03dd95d81f9)
+
+
