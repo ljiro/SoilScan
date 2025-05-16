@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 
+const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict-crop';
+
 const CropRecommendationScreen = () => {
   const [soilParams, setSoilParams] = useState({
     N: '',
@@ -48,7 +50,7 @@ const CropRecommendationScreen = () => {
       };
 
       // This would be replaced with actual API call to your model endpoint
-      const response = await fetch('YOUR_MODEL_API_ENDPOINT', {
+      const response = await fetch(API_ENDPOINT, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

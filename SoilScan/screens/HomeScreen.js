@@ -8,13 +8,14 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Platform,
   Linking,
-  Platform
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 
-const API_ENDPOINT = 'https://soilscanmltraining-soilscan-api.hf.space/predict';
+const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict';
 
 const HomeScreen = () => {
   const [image, setImage] = useState(null);
@@ -37,57 +38,81 @@ const HomeScreen = () => {
     })();
   }, []);
 
-  const uploadImageToAPI = async (uri) => {
-    setIsAnalyzing(true);
+const uploadImageToAPI = async (fileUri) => {
+  setIsAnalyzing(true);
+
+  let result = null; // ✅ declare up front
+
+  try {
+    const fileName = fileUri.split('/').pop();
+    const fileType = fileName.endsWith('.png') ? 'image/png' : 'image/jpeg';
+
+    const formData = new FormData();
+    formData.append('file', {
+      uri: fileUri,
+      name: fileName,
+      type: fileType,
+    });
+
+    const response = await fetch(API_ENDPOINT, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+
+    const text = await response.text();
+    const contentType = response.headers.get('content-type') || '';
+
+
+
+// ✅ Log the raw response from your FastAPI backend
+console.log("Raw response:", text);
+    if (!contentType.includes('application/json')) {
+      throw new Error(`Non-JSON response: ${text.slice(0, 300)}`);
+    }
 
     try {
-      const formData = new FormData();
-      formData.append('file', {
-        uri: uri,
-        type: 'image/jpeg',
-        name: 'soil_image.jpg',
-      });
-;
-
-      const response = await fetch(API_ENDPOINT, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          'Accept': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`API request failed with status ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (data.predictions && data.predictions.length > 0) {
-        const validPredictions = data.predictions.filter(
-          (pred) => pred.confidence > 0
-        );
-
-        const formattedResults = validPredictions.map((pred) => ({
-          name: pred.color_name,
-          hex: pred.hex_color,
-          description: pred.description,
-          properties: pred.properties || [],
-          confidence: Math.round(pred.confidence * 100),
-          munsellCode: pred.munsell_code,
-        }));
-
-        setResults(formattedResults);
-        setSelectedColor(formattedResults[0]);
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to analyze soil color. Please try again.');
-      console.error('API Error:', error);
-    } finally {
-      setIsAnalyzing(false);
+      result = JSON.parse(text);
+    } catch (e) {
+      throw new Error(`Failed to parse JSON: ${text.slice(0, 300)}`);
     }
-  };
+
+    if (!result || result.error) {
+      throw new Error(result?.error || 'Unknown error');
+    }
+
+    const output = result.predictions;
+
+    if (!Array.isArray(output)) {
+      throw new Error('Unexpected API response format');
+    }
+
+    const formattedResults = output.map((item) => ({
+      name: item.color_name || 'Unknown',
+      hex: item.hex_color || '#FFFFFF',
+      description: item.description || 'No description available.',
+      properties: item.properties || [],
+      confidence: Math.round(item.confidence * 100),
+      munsellCode: item.munsell_code || 'N/A',
+    }));
+
+    setResults(formattedResults);
+    setSelectedColor(formattedResults[0]);
+
+  } catch (error) {
+    console.error('Upload Error:', error);
+    Alert.alert('Error', `Failed to analyze soil color:\n\n${error.message}`);
+    setResults([]);
+    setSelectedColor(null);
+  } finally {
+    setIsAnalyzing(false);
+  }
+};
+
+
+
 
   const handleCapture = async () => {
     try {
@@ -98,7 +123,7 @@ const HomeScreen = () => {
         aspect: [4, 3],
       });
 
-      if (!pickerResult.canceled && pickerResult.assets && pickerResult.assets.length > 0) {
+      if (!pickerResult.canceled && pickerResult.assets?.length > 0) {
         const imageUri = pickerResult.assets[0].uri;
         setImage(imageUri);
         setResults([]);
@@ -106,7 +131,7 @@ const HomeScreen = () => {
         await uploadImageToAPI(imageUri);
       }
     } catch (error) {
-      Alert.alert('Error', error.message);
+      Alert.alert('Error', `Camera error: ${error.message}`);
     }
   };
 
@@ -119,7 +144,7 @@ const HomeScreen = () => {
         aspect: [4, 3],
       });
 
-      if (!pickerResult.canceled && pickerResult.assets && pickerResult.assets.length > 0) {
+      if (!pickerResult.canceled && pickerResult.assets?.length > 0) {
         const imageUri = pickerResult.assets[0].uri;
         setImage(imageUri);
         setResults([]);
@@ -127,18 +152,26 @@ const HomeScreen = () => {
         await uploadImageToAPI(imageUri);
       }
     } catch (error) {
-      Alert.alert('Error', error.message);
+      Alert.alert('Error', `Upload error: ${error.message}`);
     }
   };
 
   const openMunsellGuide = () => {
-    Linking.openURL(
-      'https://www.nrcs.usda.gov/resources/education-and-teaching-materials/soil-color-chart'
-    );
+    const munsellUrl = 'https://www.nrcs.usda.gov/resources/education-and-teaching-materials/soil-color-chart';
+    Linking.canOpenURL(munsellUrl)
+      .then(supported => {
+        if (!supported) {
+          Alert.alert('Error', 'Cannot open Munsell Guide URL.');
+        } else {
+          return Linking.openURL(munsellUrl);
+        }
+      })
+      .catch((err) => Alert.alert('Error', `Error opening URL: ${err.message}`));
   };
 
   return (
     <ScrollView style={styles.container}>
+      {/* Rest of your JSX remains exactly the same */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Scan Soil Sample</Text>
 
@@ -295,6 +328,7 @@ const HomeScreen = () => {
   );
 };
 
+// Your StyleSheet remains exactly the same
 const styles = StyleSheet.create({
   container: {
     flex: 1,
