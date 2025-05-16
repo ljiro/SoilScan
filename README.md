@@ -23,7 +23,7 @@ The machine learning logic is powered by a Python backend hosted on Hugging Face
 
 **_Soil Image Classification_**
 
-_Result_
+The user can upload a photo or take a photo. This results in the following:
 - Munsell color code
 - Description of soil color
 - soil properties
@@ -36,10 +36,10 @@ _Result_
 
 **_Crop Recommendation_**
 
-_Result_
+The user can input NPK values, pH, temperature, humidity, and rainfall. It results in the following:
 - Top 5 crop recommendations
 - confidence level in the crop recommendation
   
-![Screenshot_20250516_150417_Expo Go](https://github.com/user-attachments/assets/472242c9-df5f-4278-9297-b03dd95d81f9)
+![Screenshot_20250516_150420_Expo Go](https://github.com/user-attachments/assets/23123564-9bc8-4a7d-8c7c-cecba984310a)           ![Screenshot_20250516_150423_Expo Go](https://github.com/user-attachments/assets/0d1cdb09-ea22-47ad-8be0-bdc086bb87aa)   ![Screenshot_20250516_150417_Expo Go](https://github.com/user-attachments/assets/472242c9-df5f-4278-9297-b03dd95d81f9)
 
 
