@@ -8,15 +8,15 @@ The machine learning logic is powered by a Python backend hosted on Hugging Face
 # Stack
 
 
-📱 React Native (Expo) – for building cross-platform mobile UI
+- React Native (Expo) – for building cross-platform mobile UI
 
-🧠 ResNet50 – for soil color classification from images
+- ResNet50 – for soil color classification from images
 
-🌾 XGBoost – for crop recommendation based on soil classification
+- XGBoost – for crop recommendation based on soil classification
 
-🐍 Python – backend logic and ML model hosting
+- Python – backend logic and ML model hosting
 
-☁️ Hugging Face Spaces – lightweight cloud backend for API hosting
+- Hugging Face Spaces – lightweight cloud backend for API hosting
 
 # Screenshots
 
