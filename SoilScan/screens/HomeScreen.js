@@ -10,6 +10,8 @@ import {
   Alert,
   Platform,
   Linking,
+  Modal,
+  TextInput,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImagePicker from 'expo-image-picker';
@@ -17,11 +19,13 @@ import * as FileSystem from 'expo-file-system';
 
 const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict';
 
-const HomeScreen = () => {
+const HomeScreen = ({ navigation }) => {
   const [image, setImage] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [results, setResults] = useState([]);
-  const [selectedColor, setSelectedColor] = useState(null);
+  const [selectedTexture, setSelectedTexture] = useState(null);
+  const [showCropRecommendationModal, setShowCropRecommendationModal] = useState(false);
+  const [soilTextureParam, setSoilTextureParam] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -38,81 +42,76 @@ const HomeScreen = () => {
     })();
   }, []);
 
-const uploadImageToAPI = async (fileUri) => {
-  setIsAnalyzing(true);
+  const uploadImageToAPI = async (fileUri) => {
+    setIsAnalyzing(true);
 
-  let result = null; // ✅ declare up front
-
-  try {
-    const fileName = fileUri.split('/').pop();
-    const fileType = fileName.endsWith('.png') ? 'image/png' : 'image/jpeg';
-
-    const formData = new FormData();
-    formData.append('file', {
-      uri: fileUri,
-      name: fileName,
-      type: fileType,
-    });
-
-    const response = await fetch(API_ENDPOINT, {
-      method: 'POST',
-      body: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-
-    const text = await response.text();
-    const contentType = response.headers.get('content-type') || '';
-
-
-
-// ✅ Log the raw response from your FastAPI backend
-console.log("Raw response:", text);
-    if (!contentType.includes('application/json')) {
-      throw new Error(`Non-JSON response: ${text.slice(0, 300)}`);
-    }
+    let result = null;
 
     try {
-      result = JSON.parse(text);
-    } catch (e) {
-      throw new Error(`Failed to parse JSON: ${text.slice(0, 300)}`);
+      const fileName = fileUri.split('/').pop();
+      const fileType = fileName.endsWith('.png') ? 'image/png' : 'image/jpeg';
+
+      const formData = new FormData();
+      formData.append('file', {
+        uri: fileUri,
+        name: fileName,
+        type: fileType,
+      });
+
+      const response = await fetch(API_ENDPOINT, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      const text = await response.text();
+      const contentType = response.headers.get('content-type') || '';
+
+      console.log("Raw response:", text);
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Non-JSON response: ${text.slice(0, 300)}`);
+      }
+
+      try {
+        result = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`Failed to parse JSON: ${text.slice(0, 300)}`);
+      }
+
+      if (!result || result.error) {
+        throw new Error(result?.error || 'Unknown error');
+      }
+
+      const output = result.predictions;
+
+      if (!Array.isArray(output)) {
+        throw new Error('Unexpected API response format');
+      }
+
+      // Format results for texture predictions
+      const formattedResults = output.map((item) => ({
+        name: item.texture_name || 'Unknown',
+        description: item.description || 'No description available.',
+        properties: item.properties || [],
+        confidence: Math.round(item.confidence * 100),
+        classification: item.classification || 'N/A',
+      }));
+
+      setResults(formattedResults);
+      setSelectedTexture(formattedResults[0]);
+      setSoilTextureParam(formattedResults[0].name); // Set top prediction as default for crop recommendation
+
+    } catch (error) {
+      console.error('Upload Error:', error);
+      Alert.alert('Error', `Failed to analyze soil texture:\n\n${error.message}`);
+      setResults([]);
+      setSelectedTexture(null);
+    } finally {
+      setIsAnalyzing(false);
     }
-
-    if (!result || result.error) {
-      throw new Error(result?.error || 'Unknown error');
-    }
-
-    const output = result.predictions;
-
-    if (!Array.isArray(output)) {
-      throw new Error('Unexpected API response format');
-    }
-
-    const formattedResults = output.map((item) => ({
-      name: item.color_name || 'Unknown',
-      hex: item.hex_color || '#FFFFFF',
-      description: item.description || 'No description available.',
-      properties: item.properties || [],
-      confidence: Math.round(item.confidence * 100),
-      munsellCode: item.munsell_code || 'N/A',
-    }));
-
-    setResults(formattedResults);
-    setSelectedColor(formattedResults[0]);
-
-  } catch (error) {
-    console.error('Upload Error:', error);
-    Alert.alert('Error', `Failed to analyze soil color:\n\n${error.message}`);
-    setResults([]);
-    setSelectedColor(null);
-  } finally {
-    setIsAnalyzing(false);
-  }
-};
-
-
-
+  };
 
   const handleCapture = async () => {
     try {
@@ -127,7 +126,7 @@ console.log("Raw response:", text);
         const imageUri = pickerResult.assets[0].uri;
         setImage(imageUri);
         setResults([]);
-        setSelectedColor(null);
+        setSelectedTexture(null);
         await uploadImageToAPI(imageUri);
       }
     } catch (error) {
@@ -148,7 +147,7 @@ console.log("Raw response:", text);
         const imageUri = pickerResult.assets[0].uri;
         setImage(imageUri);
         setResults([]);
-        setSelectedColor(null);
+        setSelectedTexture(null);
         await uploadImageToAPI(imageUri);
       }
     } catch (error) {
@@ -156,22 +155,17 @@ console.log("Raw response:", text);
     }
   };
 
-  const openMunsellGuide = () => {
-    const munsellUrl = 'https://www.nrcs.usda.gov/resources/education-and-teaching-materials/soil-color-chart';
-    Linking.canOpenURL(munsellUrl)
-      .then(supported => {
-        if (!supported) {
-          Alert.alert('Error', 'Cannot open Munsell Guide URL.');
-        } else {
-          return Linking.openURL(munsellUrl);
-        }
-      })
-      .catch((err) => Alert.alert('Error', `Error opening URL: ${err.message}`));
+  const handleCropRecommendation = () => {
+    setShowCropRecommendationModal(true);
+  };
+
+  const navigateToCropRecommendation = () => {
+    navigation.navigate('CropRecommendation', { soilTexture: soilTextureParam });
+    setShowCropRecommendationModal(false);
   };
 
   return (
     <ScrollView style={styles.container}>
-      {/* Rest of your JSX remains exactly the same */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Scan Soil Sample</Text>
 
@@ -193,7 +187,7 @@ console.log("Raw response:", text);
           {isAnalyzing && (
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="large" color="#5D9C59" />
-              <Text style={styles.loadingText}>Analyzing soil color...</Text>
+              <Text style={styles.loadingText}>Analyzing soil texture...</Text>
             </View>
           )}
         </View>
@@ -211,42 +205,42 @@ console.log("Raw response:", text);
         </View>
       </View>
 
-      {selectedColor && (
+      {selectedTexture && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Icon name="tint" size={20} color="#5D9C59" style={styles.sectionIcon} />
-            <Text style={styles.sectionTitle}>Primary Soil Color</Text>
+            <Icon name="leaf" size={20} color="#5D9C59" style={styles.sectionIcon} />
+            <Text style={styles.sectionTitle}>Primary Soil Texture</Text>
           </View>
 
           <View style={styles.primaryResultCard}>
-            <View style={styles.colorHeader}>
-              <View
-                style={[styles.colorSwatch, { backgroundColor: selectedColor.hex }]}
-              />
+            <View style={styles.textureHeader}>
+              <View style={styles.textureIconContainer}>
+                <Icon name="pagelines" size={24} color="#5D9C59" />
+              </View>
               <View>
-                <Text style={styles.primaryColorName}>{selectedColor.name}</Text>
-                <Text style={styles.munsellCode}>{selectedColor.munsellCode}</Text>
+                <Text style={styles.primaryTextureName}>{selectedTexture.name}</Text>
+                <Text style={styles.classification}>{selectedTexture.classification}</Text>
               </View>
             </View>
 
             <View style={styles.confidenceContainer}>
               <Text style={styles.confidenceValue}>
-                {selectedColor.confidence}% Match
+                {selectedTexture.confidence}% Confidence
               </Text>
               <View style={styles.confidenceBar}>
                 <View
                   style={[
                     styles.confidenceFill,
-                    { width: `${selectedColor.confidence}%` },
+                    { width: `${selectedTexture.confidence}%` },
                   ]}
                 />
               </View>
             </View>
 
-            <Text style={styles.description}>{selectedColor.description}</Text>
+            <Text style={styles.description}>{selectedTexture.description}</Text>
 
             <View style={styles.propertiesContainer}>
-              {selectedColor.properties.map((prop, i) => (
+              {selectedTexture.properties.map((prop, i) => (
                 <View key={i} style={styles.propertyTag}>
                   <Text style={styles.propertyText}>{prop}</Text>
                 </View>
@@ -254,13 +248,13 @@ console.log("Raw response:", text);
             </View>
 
             <TouchableOpacity
-              style={styles.learnMoreButton}
-              onPress={openMunsellGuide}
+              style={styles.cropRecommendationButton}
+              onPress={handleCropRecommendation}
             >
-              <Text style={styles.learnMoreText}>
-                Learn about Munsell Colors
+              <Text style={styles.cropRecommendationText}>
+                Get Crop Recommendations
               </Text>
-              <Icon name="external-link" size={14} color="#5D9C59" />
+              <Icon name="arrow-right" size={14} color="#5D9C59" />
             </TouchableOpacity>
           </View>
         </View>
@@ -269,23 +263,26 @@ console.log("Raw response:", text);
       {results.length > 1 && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Icon name="palette" size={20} color="#5D9C59" style={styles.sectionIcon} />
-            <Text style={styles.sectionTitle}>Alternative Matches</Text>
+            <Icon name="list" size={20} color="#5D9C59" style={styles.sectionIcon} />
+            <Text style={styles.sectionTitle}>Alternative Textures</Text>
           </View>
 
-          {results.slice(1).map((item, index) => (
+          {results.slice(1, 5).map((item, index) => (
             <TouchableOpacity
               key={index}
-              style={styles.soilCard}
-              onPress={() => setSelectedColor(item)}
+              style={styles.textureCard}
+              onPress={() => {
+                setSelectedTexture(item);
+                setSoilTextureParam(item.name);
+              }}
             >
-              <View style={styles.colorHeader}>
-                <View
-                  style={[styles.colorIndicator, { backgroundColor: item.hex }]}
-                />
+              <View style={styles.textureHeader}>
+                <View style={styles.textureIconContainer}>
+                  <Icon name="pagelines" size={20} color="#5D9C59" />
+                </View>
                 <View>
-                  <Text style={styles.soilType}>{item.name}</Text>
-                  <Text style={styles.munsellCode}>{item.munsellCode}</Text>
+                  <Text style={styles.textureType}>{item.name}</Text>
+                  <Text style={styles.classification}>{item.classification}</Text>
                 </View>
               </View>
 
@@ -305,263 +302,161 @@ console.log("Raw response:", text);
         </View>
       )}
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>How to Get Best Results</Text>
-        <View style={styles.tipItem}>
-          <Icon name="lightbulb-o" size={16} color="#5D9C59" />
-          <Text style={styles.tipText}>Photograph soil in natural daylight</Text>
+      <Modal
+        visible={showCropRecommendationModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowCropRecommendationModal(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Crop Recommendation</Text>
+            <Text style={styles.modalText}>
+              The detected soil texture is: {selectedTexture?.name}
+            </Text>
+            
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Soil Texture (you can modify)</Text>
+              <TextInput
+                style={styles.input}
+                value={soilTextureParam}
+                onChangeText={setSoilTextureParam}
+                placeholder="Enter soil texture"
+              />
+            </View>
+
+            <View style={styles.modalButtonContainer}>
+              <TouchableOpacity 
+                style={styles.modalCancelButton}
+                onPress={() => setShowCropRecommendationModal(false)}
+              >
+                <Text style={styles.modalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.modalConfirmButton}
+                onPress={navigateToCropRecommendation}
+              >
+                <Text style={[styles.modalButtonText, { color: 'white' }]}>Continue</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
-        <View style={styles.tipItem}>
-          <Icon name="lightbulb-o" size={16} color="#5D9C59" />
-          <Text style={styles.tipText}>
-            Use moist (not wet) soil for accurate color
-          </Text>
-        </View>
-        <View style={styles.tipItem}>
-          <Icon name="lightbulb-o" size={16} color="#5D9C59" />
-          <Text style={styles.tipText}>
-            Remove surface debris before photographing
-          </Text>
-        </View>
-      </View>
+      </Modal>
     </ScrollView>
   );
 };
 
-// Your StyleSheet remains exactly the same
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-    padding: 16,
-  },
-  section: {
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1A3C40',
-  },
-  sectionIcon: {
-    marginRight: 8,
-  },
-  scanPreview: {
-    width: '100%',
-    height: 200,
-    backgroundColor: '#C7E8CA',
-    borderRadius: 12,
-    marginVertical: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  image: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  placeholder: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  placeholderIcon: {
-    opacity: 0.7,
-    marginBottom: 8,
-  },
-  placeholderText: {
-    color: '#1A3C40',
-    opacity: 0.7,
-  },
-  loadingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(255,255,255,0.8)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 8,
-    color: '#1A3C40',
-  },
-  buttonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 16,
-  },
-  primaryButton: {
-    flex: 1,
-    backgroundColor: '#5D9C59',
-    borderRadius: 25,
-    padding: 12,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
-    shadowColor: '#5D9C59',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  outlineButton: {
-    flex: 1,
-    backgroundColor: 'transparent',
-    borderWidth: 2,
-    borderColor: '#5D9C59',
-    borderRadius: 25,
-    padding: 12,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 8,
-  },
-  buttonText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  buttonIcon: {
-    marginRight: 8,
-  },
-  primaryResultCard: {
-    backgroundColor: '#EDF7ED',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#5D9C59',
-  },
-  soilCard: {
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-  },
-  colorHeader: {
+  // ... (keep all your existing styles)
+
+  // Add these new styles:
+  textureHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 8,
   },
-  colorSwatch: {
+  textureIconContainer: {
     width: 40,
     height: 40,
     borderRadius: 20,
+    backgroundColor: '#EDF7ED',
+    justifyContent: 'center',
+    alignItems: 'center',
     marginRight: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.1)',
   },
-  colorIndicator: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    marginRight: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.1)',
-  },
-  primaryColorName: {
+  primaryTextureName: {
     fontSize: 20,
     fontWeight: '700',
     color: '#1A3C40',
   },
-  soilType: {
+  textureType: {
     fontSize: 16,
     fontWeight: '600',
     color: '#1A3C40',
   },
-  munsellCode: {
+  classification: {
     fontSize: 14,
     color: '#666',
-    fontFamily: 'monospace',
     marginTop: 2,
   },
-  confidenceContainer: {
+  cropRecommendationButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'center',
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: '#EDF7ED',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#5D9C59',
   },
-  confidenceValue: {
+  cropRecommendationText: {
+    color: '#5D9C59',
     fontWeight: '600',
     marginRight: 8,
-    color: '#1A3C40',
-    fontSize: 14,
   },
-  confidenceBar: {
+  modalContainer: {
     flex: 1,
-    height: 8,
-    backgroundColor: 'rgba(0,0,0,0.1)',
-    borderRadius: 4,
-    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
-  confidenceFill: {
-    height: '100%',
-    backgroundColor: '#5D9C59',
-    borderRadius: 4,
-  },
-  description: {
-    marginVertical: 8,
-    color: '#1A3C40',
-    lineHeight: 20,
-  },
-  propertiesContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: 12,
-  },
-  propertyTag: {
+  modalContent: {
     backgroundColor: 'white',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 25,
+    borderRadius: 16,
+    padding: 20,
+    width: '90%',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#1A3C40',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  modalText: {
+    color: '#1A3C40',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  modalButtonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 20,
+  },
+  modalCancelButton: {
+    flex: 1,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#5D9C59',
+    borderRadius: 8,
     marginRight: 8,
-    marginBottom: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 1,
   },
-  propertyText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#1A3C40',
-  },
-  learnMoreButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    paddingVertical: 8,
-  },
-  learnMoreText: {
-    color: '#5D9C59',
-    marginRight: 6,
-    fontWeight: '500',
-  },
-  tipItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  tipText: {
+  modalConfirmButton: {
+    flex: 1,
+    backgroundColor: '#5D9C59',
+    padding: 12,
+    borderRadius: 8,
     marginLeft: 8,
+  },
+  modalButtonText: {
+    textAlign: 'center',
+    fontWeight: '600',
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  inputLabel: {
     color: '#1A3C40',
+    marginBottom: 8,
+    fontWeight: '500',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
   },
 });
 
