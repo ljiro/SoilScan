@@ -11,7 +11,6 @@ import {
   Platform,
   Linking,
   Modal,
-  TextInput,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImagePicker from 'expo-image-picker';
@@ -24,8 +23,6 @@ const HomeScreen = ({ navigation }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [results, setResults] = useState([]);
   const [selectedTexture, setSelectedTexture] = useState(null);
-  const [showCropRecommendationModal, setShowCropRecommendationModal] = useState(false);
-  const [soilTextureParam, setSoilTextureParam] = useState('');
   const [showRecommendationPrompt, setShowRecommendationPrompt] = useState(false);
 
   useEffect(() => {
@@ -111,8 +108,11 @@ const HomeScreen = ({ navigation }) => {
 
       setResults([primaryPrediction, ...alternativePredictions]);
       setSelectedTexture(primaryPrediction);
-      setSoilTextureParam(primaryPrediction.name);
-      setShowRecommendationPrompt(true);
+      
+      // Show the recommendation prompt after a short delay
+      setTimeout(() => {
+        setShowRecommendationPrompt(true);
+      }, 500);
 
     } catch (error) {
       console.error('Upload Error:', error);
@@ -169,20 +169,13 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  const handleCropRecommendation = () => {
-    setShowCropRecommendationModal(true);
-  };
-
-  const navigateToCropRecommendation = () => {
-    navigation.navigate('CropRecommendation', { soilTexture: soilTextureParam });
-    setShowCropRecommendationModal(false);
-    setShowRecommendationPrompt(false);
-  };
-
   const handleRecommendationResponse = (response) => {
     setShowRecommendationPrompt(false);
     if (response) {
-      handleCropRecommendation();
+      // Directly navigate to CropRecommendationScreen with the soil texture
+      navigation.navigate('CropRecommendation', { 
+        soilTexture: selectedTexture.name 
+      });
     }
   };
 
@@ -266,7 +259,7 @@ const HomeScreen = ({ navigation }) => {
 
             <TouchableOpacity
               style={[styles.cropRecommendationButton, { borderColor: selectedTexture.color }]}
-              onPress={handleCropRecommendation}
+              onPress={() => handleRecommendationResponse(true)}
             >
               <Text style={[styles.cropRecommendationText, { color: selectedTexture.color }]}>
                 Get Crop Recommendations
@@ -290,7 +283,6 @@ const HomeScreen = ({ navigation }) => {
               style={styles.textureCard}
               onPress={() => {
                 setSelectedTexture(item);
-                setSoilTextureParam(item.name);
               }}
             >
               <View style={styles.textureHeader}>
@@ -324,7 +316,10 @@ const HomeScreen = ({ navigation }) => {
           <View style={styles.promptContent}>
             <Text style={styles.promptTitle}>Soil Analysis Complete</Text>
             <Text style={styles.promptText}>
-              Would you like to get crop recommendations for {selectedTexture?.name} soil?
+              The detected soil texture is: {selectedTexture?.name}
+            </Text>
+            <Text style={styles.promptText}>
+              Would you like to get crop recommendations for this soil type?
             </Text>
             <View style={styles.promptButtonContainer}>
               <TouchableOpacity
@@ -338,47 +333,6 @@ const HomeScreen = ({ navigation }) => {
                 onPress={() => handleRecommendationResponse(true)}
               >
                 <Text style={[styles.promptButtonText, { color: 'white' }]}>Yes</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={showCropRecommendationModal}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowCropRecommendationModal(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Crop Recommendation</Text>
-            <Text style={styles.modalText}>
-              The detected soil texture is: {selectedTexture?.name}
-            </Text>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Soil Texture (you can modify)</Text>
-              <TextInput
-                style={styles.input}
-                value={soilTextureParam}
-                onChangeText={setSoilTextureParam}
-                placeholder="Enter soil texture"
-              />
-            </View>
-
-            <View style={styles.modalButtonContainer}>
-              <TouchableOpacity 
-                style={styles.modalCancelButton}
-                onPress={() => setShowCropRecommendationModal(false)}
-              >
-                <Text style={styles.modalButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.modalConfirmButton}
-                onPress={navigateToCropRecommendation}
-              >
-                <Text style={[styles.modalButtonText, { color: 'white' }]}>Continue</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -571,69 +525,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#1A3C40',
   },
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  modalContent: {
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 20,
-    width: '90%',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#1A3C59',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  modalText: {
-    color: '#1A3C40',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  modalButtonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 20,
-  },
-  modalCancelButton: {
-    flex: 1,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#5D9C59',
-    borderRadius: 8,
-    marginRight: 8,
-  },
-  modalConfirmButton: {
-    flex: 1,
-    backgroundColor: '#5D9C59',
-    padding: 12,
-    borderRadius: 8,
-    marginLeft: 8,
-  },
-  modalButtonText: {
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-  inputGroup: {
-    marginBottom: 16,
-  },
-  inputLabel: {
-    color: '#1A3C40',
-    marginBottom: 8,
-    fontWeight: '500',
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-  },
   promptContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -655,13 +546,14 @@ const styles = StyleSheet.create({
   },
   promptText: {
     color: '#666',
-    marginBottom: 20,
+    marginBottom: 8,
     textAlign: 'center',
     lineHeight: 22,
   },
   promptButtonContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginTop: 16,
   },
   promptButtonNo: {
     flex: 1,
