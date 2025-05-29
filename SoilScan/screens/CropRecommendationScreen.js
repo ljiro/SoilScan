@@ -319,7 +319,7 @@ const CropRecommendationScreen = ({ route }) => {
           
           <View style={styles.inputRow}>
             <View style={[styles.inputGroup, styles.inputGroupSmall]}>
-              <Text style={styles.inputLabel}>Temperature (°C)</Text>
+              <Text style={styles.inputLabel}>Temp (°C)</Text>
               <TextInput
                 style={styles.input}
                 keyboardType="numeric"

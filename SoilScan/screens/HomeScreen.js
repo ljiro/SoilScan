@@ -9,7 +9,6 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
-  Linking,
   Modal,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
@@ -24,6 +23,27 @@ const HomeScreen = ({ navigation }) => {
   const [results, setResults] = useState([]);
   const [selectedTexture, setSelectedTexture] = useState(null);
   const [showRecommendationPrompt, setShowRecommendationPrompt] = useState(false);
+  const [expandedFaqIndex, setExpandedFaqIndex] = useState(null);
+
+  // FAQ data
+  const faqs = [
+    {
+      question: "How do I take a good soil sample photo?",
+      answer: "Take a close-up photo of dry soil in good lighting. Remove any debris or rocks. The photo should clearly show the soil texture and color."
+    },
+    {
+      question: "What soil properties does the app analyze?",
+      answer: "The app analyzes texture (sand, silt, clay composition), color, and structure to determine soil type and provide recommendations."
+    },
+    {
+      question: "Why are crop recommendations important?",
+      answer: "Different crops thrive in different soil types. Our recommendations help you choose crops that will grow best in your specific soil conditions."
+    },
+    {
+      question: "How accurate are the soil analysis results?",
+      answer: "Our AI model has an accuracy of about 85-90% for common soil types. For best results, ensure your photo is clear and representative of your soil."
+    }
+  ];
 
   useEffect(() => {
     (async () => {
@@ -39,6 +59,10 @@ const HomeScreen = ({ navigation }) => {
       }
     })();
   }, []);
+
+  const toggleFaq = (index) => {
+    setExpandedFaqIndex(expandedFaqIndex === index ? null : index);
+  };
 
   const uploadImageToAPI = async (fileUri) => {
     setIsAnalyzing(true);
@@ -67,7 +91,6 @@ const HomeScreen = ({ navigation }) => {
       const text = await response.text();
       const contentType = response.headers.get('content-type') || '';
 
-      console.log("Raw response:", text);
       if (!contentType.includes('application/json')) {
         throw new Error(`Non-JSON response: ${text.slice(0, 300)}`);
       }
@@ -82,7 +105,6 @@ const HomeScreen = ({ navigation }) => {
         throw new Error(result?.error || 'Unknown error');
       }
 
-      // Process the new response format
       const primaryPrediction = {
         name: result.predicted_class || 'Unknown',
         description: result.description || 'No description available.',
@@ -91,7 +113,6 @@ const HomeScreen = ({ navigation }) => {
         color: result.color || '#C19A6B',
       };
 
-      // Process alternative predictions
       const alternativePredictions = [];
       if (result.all_confidences) {
         for (const [texture, data] of Object.entries(result.all_confidences)) {
@@ -103,13 +124,11 @@ const HomeScreen = ({ navigation }) => {
         }
       }
 
-      // Sort alternatives by confidence (descending)
       alternativePredictions.sort((a, b) => b.confidence - a.confidence);
 
       setResults([primaryPrediction, ...alternativePredictions]);
       setSelectedTexture(primaryPrediction);
       
-      // Show the recommendation prompt after a short delay
       setTimeout(() => {
         setShowRecommendationPrompt(true);
       }, 500);
@@ -172,7 +191,6 @@ const HomeScreen = ({ navigation }) => {
   const handleRecommendationResponse = (response) => {
     setShowRecommendationPrompt(false);
     if (response) {
-      // Directly navigate to CropRecommendationScreen with the soil texture
       navigation.navigate('CropRecommendation', { 
         soilTexture: selectedTexture.name 
       });
@@ -181,6 +199,7 @@ const HomeScreen = ({ navigation }) => {
 
   return (
     <ScrollView style={styles.container}>
+      {/* Scan Soil Sample Section */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Scan Soil Sample</Text>
 
@@ -220,6 +239,37 @@ const HomeScreen = ({ navigation }) => {
         </View>
       </View>
 
+      {/* FAQ Section */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Icon name="question-circle" size={20} color="#5D9C59" style={styles.sectionIcon} />
+          <Text style={styles.sectionTitle}>Frequently Asked Questions</Text>
+        </View>
+
+        {faqs.map((faq, index) => (
+          <View key={index} style={styles.faqItem}>
+            <TouchableOpacity 
+              style={styles.faqQuestion} 
+              onPress={() => toggleFaq(index)}
+            >
+              <Text style={styles.faqQuestionText}>{faq.question}</Text>
+              <Icon 
+                name={expandedFaqIndex === index ? "chevron-up" : "chevron-down"} 
+                size={16} 
+                color="#5D9C59" 
+              />
+            </TouchableOpacity>
+            
+            {expandedFaqIndex === index && (
+              <View style={styles.faqAnswer}>
+                <Text style={styles.faqAnswerText}>{faq.answer}</Text>
+              </View>
+            )}
+          </View>
+        ))}
+      </View>
+
+      {/* Results Sections */}
       {selectedTexture && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -306,6 +356,7 @@ const HomeScreen = ({ navigation }) => {
         </View>
       )}
 
+      {/* Recommendation Prompt Modal */}
       <Modal
         visible={showRecommendationPrompt}
         animationType="fade"
@@ -346,9 +397,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F5F5F5',
-  },
-  content: {
-    padding: 16,
   },
   section: {
     backgroundColor: 'white',
@@ -573,6 +621,33 @@ const styles = StyleSheet.create({
   promptButtonText: {
     textAlign: 'center',
     fontWeight: '600',
+  },
+  // FAQ Styles
+  faqItem: {
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 12,
+  },
+  faqQuestion: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  faqQuestionText: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#1A3C40',
+  },
+  faqAnswer: {
+    paddingVertical: 8,
+    paddingLeft: 8,
+  },
+  faqAnswerText: {
+    color: '#666',
+    lineHeight: 20,
   },
 });
 
