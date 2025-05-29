@@ -65,85 +65,47 @@ const HomeScreen = ({ navigation }) => {
   };
 
   const uploadImageToAPI = async (fileUri) => {
-    setIsAnalyzing(true);
+  setIsAnalyzing(true);
 
-    let result = null;
-
-    try {
-      const fileName = fileUri.split('/').pop();
-      const fileType = fileName.endsWith('.png') ? 'image/png' : 'image/jpeg';
-
-      const formData = new FormData();
-      formData.append('file', {
-        uri: fileUri,
-        name: fileName,
-        type: fileType,
-      });
-
-      const response = await fetch(API_ENDPOINT, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-
-      const text = await response.text();
-      const contentType = response.headers.get('content-type') || '';
-
-      if (!contentType.includes('application/json')) {
-        throw new Error(`Non-JSON response: ${text.slice(0, 300)}`);
-      }
-
-      try {
-        result = JSON.parse(text);
-      } catch (e) {
-        throw new Error(`Failed to parse JSON: ${text.slice(0, 300)}`);
-      }
-
-      if (!result || result.error) {
-        throw new Error(result?.error || 'Unknown error');
-      }
-
-      const primaryPrediction = {
-        name: result.predicted_class || 'Unknown',
-        description: result.description || 'No description available.',
-        properties: result.properties || [],
-        confidence: Math.round(result.confidence * 100),
-        color: result.color || '#C19A6B',
-      };
-
-      const alternativePredictions = [];
-      if (result.all_confidences) {
-        for (const [texture, data] of Object.entries(result.all_confidences)) {
-          alternativePredictions.push({
-            name: texture,
-            confidence: Math.round(data.score * 100),
-            color: data.color || '#C19A6B',
-          });
-        }
-      }
-
-      alternativePredictions.sort((a, b) => b.confidence - a.confidence);
-
-      setResults([primaryPrediction, ...alternativePredictions]);
-      setSelectedTexture(primaryPrediction);
-      
-      setTimeout(() => {
-        setShowRecommendationPrompt(true);
-      }, 500);
-
-    } catch (error) {
-      console.error('Upload Error:', error);
-      Alert.alert('Error', `Failed to analyze soil texture:\n\n${error.message}`);
-      setResults([]);
-      setSelectedTexture(null);
-      setShowRecommendationPrompt(false);
-    } finally {
-      setIsAnalyzing(false);
+  try {
+    // Convert file URI to blob (works on both Android and iOS)
+    const fileInfo = await FileSystem.getInfoAsync(fileUri);
+    if (!fileInfo.exists) {
+      throw new Error("File doesn't exist");
     }
-  };
 
+    const fileType = fileUri.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    const fileName = fileUri.split('/').pop();
+
+    // Create form data
+    const formData = new FormData();
+    formData.append('file', {
+      uri: fileUri,
+      name: fileName,
+      type: fileType,
+    });
+
+    const response = await fetch(API_ENDPOINT, {
+      method: 'POST',
+      body: formData,
+      // DON'T set Content-Type header manually - React Native will set it with the correct boundary
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || `Server error: ${response.status}`);
+    }
+
+    const result = await response.json();
+    
+    // Rest of your success handling...
+  } catch (error) {
+    console.error('Upload Error:', error);
+    Alert.alert('Error', `Failed to analyze soil texture:\n\n${error.message}`);
+  } finally {
+    setIsAnalyzing(false);
+  }
+};
   const handleCapture = async () => {
     try {
       const pickerResult = await ImagePicker.launchCameraAsync({
