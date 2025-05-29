@@ -64,48 +64,33 @@ const HomeScreen = ({ navigation }) => {
     setExpandedFaqIndex(expandedFaqIndex === index ? null : index);
   };
 
-  const uploadImageToAPI = async (fileUri) => {
-  setIsAnalyzing(true);
-
+const uploadImageToAPI = async (fileUri) => {
   try {
-    // Convert file URI to blob (works on both Android and iOS)
-    const fileInfo = await FileSystem.getInfoAsync(fileUri);
-    if (!fileInfo.exists) {
-      throw new Error("File doesn't exist");
-    }
-
-    const fileType = fileUri.endsWith('.png') ? 'image/png' : 'image/jpeg';
-    const fileName = fileUri.split('/').pop();
-
-    // Create form data
     const formData = new FormData();
     formData.append('file', {
       uri: fileUri,
-      name: fileName,
-      type: fileType,
+      name: 'image.jpg',
+      type: 'image/jpeg',
     });
 
     const response = await fetch(API_ENDPOINT, {
       method: 'POST',
       body: formData,
-      // DON'T set Content-Type header manually - React Native will set it with the correct boundary
+      // Let React Native set Content-Type automatically
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(errorText || `Server error: ${response.status}`);
+      const error = await response.json();
+      throw new Error(error.detail || 'Request failed');
     }
 
-    const result = await response.json();
-    
-    // Rest of your success handling...
+    return await response.json();
   } catch (error) {
-    console.error('Upload Error:', error);
-    Alert.alert('Error', `Failed to analyze soil texture:\n\n${error.message}`);
-  } finally {
-    setIsAnalyzing(false);
+    console.error('Upload error:', error);
+    throw error;
   }
 };
+
   const handleCapture = async () => {
     try {
       const pickerResult = await ImagePicker.launchCameraAsync({
