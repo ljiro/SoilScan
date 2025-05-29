@@ -17,7 +17,7 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 
-const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict';
+const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict_texture';
 
 const HomeScreen = ({ navigation }) => {
   const [image, setImage] = useState(null);
