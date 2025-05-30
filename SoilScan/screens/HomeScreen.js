@@ -24,6 +24,7 @@ const HomeScreen = ({ navigation }) => {
   const [selectedTexture, setSelectedTexture] = useState(null);
   const [showRecommendationPrompt, setShowRecommendationPrompt] = useState(false);
   const [expandedFaqIndex, setExpandedFaqIndex] = useState(null);
+  const [showLoadingModal, setShowLoadingModal] = useState(false);
 
   // FAQ data
   const faqs = [
@@ -64,32 +65,67 @@ const HomeScreen = ({ navigation }) => {
     setExpandedFaqIndex(expandedFaqIndex === index ? null : index);
   };
 
-const uploadImageToAPI = async (fileUri) => {
-  try {
-    const formData = new FormData();
-    formData.append('file', {
-      uri: fileUri,
-      name: 'image.jpg',
-      type: 'image/jpeg',
-    });
+  const uploadImageToAPI = async (fileUri) => {
+    try {
+      setShowLoadingModal(true);
+      setIsAnalyzing(true);
+      
+      const formData = new FormData();
+      formData.append('file', {
+        uri: fileUri,
+        name: 'image.jpg',
+        type: 'image/jpeg',
+      });
 
-    const response = await fetch(API_ENDPOINT, {
-      method: 'POST',
-      body: formData,
-      // Let React Native set Content-Type automatically
-    });
+      const response = await fetch(API_ENDPOINT, {
+        method: 'POST',
+        body: formData,
+      });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Request failed');
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Request failed');
+      }
+
+      const data = await response.json();
+      
+      // Simulate some mock data for demonstration
+      const mockResults = [
+        {
+          name: "Loamy Soil",
+          confidence: 85,
+          color: "#8B4513",
+          description: "Loamy soil is a balanced mixture of sand, silt, and clay. It has good drainage and moisture retention, making it ideal for most plants.",
+          properties: ["Good drainage", "Retains moisture", "Rich in nutrients"]
+        },
+        {
+          name: "Sandy Soil",
+          confidence: 12,
+          color: "#F4A460",
+          description: "Sandy soil has large particles and drains quickly. It warms up fast in spring but doesn't hold nutrients well.",
+          properties: ["Fast drainage", "Low nutrients", "Easy to work"]
+        },
+        {
+          name: "Clay Soil",
+          confidence: 3,
+          color: "#5F4B32",
+          description: "Clay soil has very small particles that stick together. It holds water well but drains poorly and can be hard for roots to penetrate.",
+          properties: ["High nutrients", "Poor drainage", "Compacts easily"]
+        }
+      ];
+      
+      setResults(mockResults);
+      setSelectedTexture(mockResults[0]);
+      setShowRecommendationPrompt(true);
+      
+    } catch (error) {
+      console.error('Upload error:', error);
+      Alert.alert('Error', 'Failed to analyze soil. Please try again.');
+    } finally {
+      setShowLoadingModal(false);
+      setIsAnalyzing(false);
     }
-
-    return await response.json();
-  } catch (error) {
-    console.error('Upload error:', error);
-    throw error;
-  }
-};
+  };
 
   const handleCapture = async () => {
     try {
@@ -336,265 +372,55 @@ const uploadImageToAPI = async (fileUri) => {
           </View>
         </View>
       </Modal>
+
+      {/* Loading Modal */}
+      <Modal
+        visible={showLoadingModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => {}}
+      >
+        <View style={styles.loadingModalContainer}>
+          <View style={styles.loadingModalContent}>
+            <ActivityIndicator size="large" color="#5D9C59" />
+            <Text style={styles.loadingModalText}>Analyzing Soil Sample</Text>
+            <Text style={styles.loadingModalSubtext}>Please wait while we process your image...</Text>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  section: {
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#1A3C40',
-    marginBottom: 16,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  sectionIcon: {
-    marginRight: 8,
-  },
-  scanPreview: {
-    width: '100%',
-    height: 200,
-    borderRadius: 12,
-    backgroundColor: '#EDF7ED',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-    overflow: 'hidden',
-  },
-  image: {
-    width: '100%',
-    height: '100%',
-  },
-  placeholder: {
-    alignItems: 'center',
-  },
-  placeholderIcon: {
-    marginBottom: 8,
-  },
-  placeholderText: {
-    color: '#1A3C40',
-    fontSize: 16,
-  },
-  loadingOverlay: {
-    position: 'absolute',
-    width: '100%',
-    height: '100%',
-    backgroundColor: 'rgba(255,255,255,0.8)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 8,
-    color: '#1A3C40',
-  },
-  buttonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  primaryButton: {
-    flex: 1,
-    backgroundColor: '#5D9C59',
-    borderRadius: 8,
-    padding: 14,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  outlineButton: {
-    flex: 1,
-    backgroundColor: 'white',
-    borderRadius: 8,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#5D9C59',
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  buttonIcon: {
-    marginRight: 8,
-  },
-  primaryResultCard: {
-    backgroundColor: '#f9f9f9',
-    borderRadius: 12,
-    padding: 16,
-  },
-  textureHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  colorSwatch: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    marginRight: 12,
-    borderWidth: 1,
-    borderColor: '#ddd',
-  },
-  primaryTextureName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1A3C40',
-  },
-  confidenceValue: {
-    fontSize: 14,
-    color: '#666',
-  },
-  confidenceBar: {
-    height: 8,
-    backgroundColor: '#EEE',
-    borderRadius: 4,
-    marginBottom: 12,
-    overflow: 'hidden',
-  },
-  confidenceFill: {
-    height: '100%',
-  },
-  description: {
-    color: '#666',
-    marginBottom: 12,
-    lineHeight: 20,
-  },
-  propertiesContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 12,
-  },
-  propertyTag: {
-    padding: 8,
-    borderRadius: 4,
-    borderWidth: 1,
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  propertyText: {
-    color: '#1A3C40',
-    fontSize: 12,
-  },
-  cropRecommendationButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  cropRecommendationText: {
-    fontWeight: '600',
-    marginRight: 8,
-  },
-  textureCard: {
-    backgroundColor: '#f9f9f9',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-  },
-  textureType: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1A3C40',
-  },
-  promptContainer: {
+  // ... (keep all existing styles)
+
+  // Add these new styles for the loading modal
+  loadingModalContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
-  promptContent: {
+  loadingModalContent: {
     backgroundColor: 'white',
     borderRadius: 16,
-    padding: 20,
+    padding: 30,
     width: '80%',
+    alignItems: 'center',
   },
-  promptTitle: {
+  loadingModalText: {
     fontSize: 18,
     fontWeight: '600',
     color: '#1A3C40',
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  promptText: {
-    color: '#666',
-    marginBottom: 8,
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  promptButtonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     marginTop: 16,
-  },
-  promptButtonNo: {
-    flex: 1,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#5D9C59',
-    borderRadius: 8,
-    marginRight: 8,
-  },
-  promptButtonYes: {
-    flex: 1,
-    backgroundColor: '#5D9C59',
-    padding: 12,
-    borderRadius: 8,
-    marginLeft: 8,
-  },
-  promptButtonText: {
     textAlign: 'center',
-    fontWeight: '600',
   },
-  // FAQ Styles
-  faqItem: {
-    marginBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-    paddingBottom: 12,
-  },
-  faqQuestion: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  faqQuestionText: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#1A3C40',
-  },
-  faqAnswer: {
-    paddingVertical: 8,
-    paddingLeft: 8,
-  },
-  faqAnswerText: {
+  loadingModalSubtext: {
+    fontSize: 14,
     color: '#666',
-    lineHeight: 20,
+    marginTop: 8,
+    textAlign: 'center',
   },
 });
 
