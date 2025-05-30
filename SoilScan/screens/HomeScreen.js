@@ -393,10 +393,262 @@ const HomeScreen = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
-  // ... (keep all existing styles)
-
-  // Add these new styles for the loading modal
-  loadingModalContainer: {
+  container: {
+    flex: 1,
+    backgroundColor: '#F5F5F5',
+  },
+  section: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#1A3C40',
+    marginBottom: 16,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  sectionIcon: {
+    marginRight: 8,
+  },
+  scanPreview: {
+    width: '100%',
+    height: 200,
+    borderRadius: 12,
+    backgroundColor: '#EDF7ED',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  image: {
+    width: '100%',
+    height: '100%',
+  },
+  placeholder: {
+    alignItems: 'center',
+  },
+  placeholderIcon: {
+    marginBottom: 8,
+  },
+  placeholderText: {
+    color: '#1A3C40',
+    fontSize: 16,
+  },
+  loadingOverlay: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 8,
+    color: '#1A3C40',
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  primaryButton: {
+    flex: 1,
+    backgroundColor: '#5D9C59',
+    borderRadius: 8,
+    padding: 14,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  outlineButton: {
+    flex: 1,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#5D9C59',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  buttonIcon: {
+    marginRight: 8,
+  },
+  primaryResultCard: {
+    backgroundColor: '#f9f9f9',
+    borderRadius: 12,
+    padding: 16,
+  },
+  textureHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  colorSwatch: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  primaryTextureName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1A3C40',
+  },
+  confidenceValue: {
+    fontSize: 14,
+    color: '#666',
+  },
+  confidenceBar: {
+    height: 8,
+    backgroundColor: '#EEE',
+    borderRadius: 4,
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  confidenceFill: {
+    height: '100%',
+  },
+  description: {
+    color: '#666',
+    marginBottom: 12,
+    lineHeight: 20,
+  },
+  propertiesContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 12,
+  },
+  propertyTag: {
+    padding: 8,
+    borderRadius: 4,
+    borderWidth: 1,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  propertyText: {
+    color: '#1A3C40',
+    fontSize: 12,
+  },
+  cropRecommendationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  cropRecommendationText: {
+    fontWeight: '600',
+    marginRight: 8,
+  },
+  textureCard: {
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+  },
+  textureType: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1A3C40',
+  },
+  promptContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  promptContent: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 20,
+    width: '80%',
+  },
+  promptTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1A3C40',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  promptText: {
+    color: '#666',
+    marginBottom: 8,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  promptButtonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 16,
+  },
+  promptButtonNo: {
+    flex: 1,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#5D9C59',
+    borderRadius: 8,
+    marginRight: 8,
+  },
+  promptButtonYes: {
+    flex: 1,
+    backgroundColor: '#5D9C59',
+    padding: 12,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  promptButtonText: {
+    textAlign: 'center',
+    fontWeight: '600',
+  },
+  // FAQ Styles
+  faqItem: {
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 12,
+  },
+  faqQuestion: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  faqQuestionText: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#1A3C40',
+  },
+  faqAnswer: {
+    paddingVertical: 8,
+    paddingLeft: 8,
+  },
+  faqAnswerText: {
+    color: '#666',
+    lineHeight: 20,
+  },
+   loadingModalContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
