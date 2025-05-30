@@ -114,8 +114,8 @@ const HomeScreen = ({ navigation }) => {
         }
       ];
       
-      setResults(mockResults);
-      setSelectedTexture(mockResults[0]);
+      setResults(data.predictions);
+      setSelectedTexture(data.primary_prediction);
       setShowRecommendationPrompt(true);
       
     } catch (error) {
