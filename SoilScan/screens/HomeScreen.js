@@ -13,11 +13,11 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
 
 const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict_texture';
 
 const HomeScreen = ({ navigation }) => {
+  // State initialization with proper types
   const [image, setImage] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [results, setResults] = useState([]);
@@ -46,6 +46,7 @@ const HomeScreen = ({ navigation }) => {
     }
   ];
 
+  // Request permissions on mount
   useEffect(() => {
     (async () => {
       if (Platform.OS !== 'web') {
@@ -89,8 +90,8 @@ const HomeScreen = ({ navigation }) => {
 
       const data = await response.json();
       
-      // Simulate some mock data for demonstration
-      const mockResults = [
+      // Use mock data if API response is invalid
+      const responseData = Array.isArray(data?.predictions) ? data.predictions : [
         {
           name: "Loamy Soil",
           confidence: 85,
@@ -113,14 +114,18 @@ const HomeScreen = ({ navigation }) => {
           properties: ["High nutrients", "Poor drainage", "Compacts easily"]
         }
       ];
-      
-      setResults(data.predictions);
-      setSelectedTexture(data.primary_prediction);
+
+      if (!Array.isArray(responseData) || responseData.length === 0) {
+        throw new Error('No valid soil data received');
+      }
+
+      setResults(responseData);
+      setSelectedTexture(responseData[0]); // Default to first result
       setShowRecommendationPrompt(true);
       
     } catch (error) {
       console.error('Upload error:', error);
-      Alert.alert('Error', 'Failed to analyze soil. Please try again.');
+      Alert.alert('Error', error.message || 'Failed to analyze soil. Please try again.');
     } finally {
       setShowLoadingModal(false);
       setIsAnalyzing(false);
@@ -173,7 +178,7 @@ const HomeScreen = ({ navigation }) => {
 
   const handleRecommendationResponse = (response) => {
     setShowRecommendationPrompt(false);
-    if (response) {
+    if (response && selectedTexture) {
       navigation.navigate('CropRecommendation', { 
         soilTexture: selectedTexture.name 
       });
@@ -283,7 +288,7 @@ const HomeScreen = ({ navigation }) => {
             <Text style={styles.description}>{selectedTexture.description}</Text>
 
             <View style={styles.propertiesContainer}>
-              {selectedTexture.properties.map((prop, i) => (
+              {selectedTexture.properties?.map((prop, i) => (
                 <View key={i} style={[styles.propertyTag, { borderColor: selectedTexture.color }]}>
                   <Text style={styles.propertyText}>{prop}</Text>
                 </View>
@@ -303,7 +308,7 @@ const HomeScreen = ({ navigation }) => {
         </View>
       )}
 
-      {results.length > 1 && (
+      {Array.isArray(results) && results.length > 1 && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Icon name="list" size={20} color="#5D9C59" style={styles.sectionIcon} />
@@ -314,9 +319,7 @@ const HomeScreen = ({ navigation }) => {
             <TouchableOpacity
               key={index}
               style={styles.textureCard}
-              onPress={() => {
-                setSelectedTexture(item);
-              }}
+              onPress={() => setSelectedTexture(item)}
             >
               <View style={styles.textureHeader}>
                 <View style={[styles.colorSwatch, { backgroundColor: item.color }]} />
@@ -350,7 +353,7 @@ const HomeScreen = ({ navigation }) => {
           <View style={styles.promptContent}>
             <Text style={styles.promptTitle}>Soil Analysis Complete</Text>
             <Text style={styles.promptText}>
-              The detected soil texture is: {selectedTexture?.name}
+              The detected soil texture is: {selectedTexture?.name || 'Unknown'}
             </Text>
             <Text style={styles.promptText}>
               Would you like to get crop recommendations for this soil type?
