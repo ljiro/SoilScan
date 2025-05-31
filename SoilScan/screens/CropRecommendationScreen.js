@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
-  TouchableOpacity, 
-  TextInput, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
   ActivityIndicator,
   Animated,
   Easing,
@@ -16,38 +16,11 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 
 const { width } = Dimensions.get('window');
 
-// Gradient Fallback Components
-const GradientView = ({ colors, style, children }) => (
-  <View style={[style, { backgroundColor: colors[0] }]}>
-    {children}
-  </View>
-);
-
-const GradientButton = ({ colors, style, children }) => (
-  <View style={[style, { backgroundColor: colors[0], borderRadius: 15 }]}>
-    {children}
-  </View>
-);
-
-// Texture Pill Component
-const TexturePill = React.memo(({ texture, selected, onPress }) => (
-  <TouchableOpacity
-    style={[
-      styles.texturePill,
-      selected && styles.selectedTexturePill
-    ]}
-    onPress={onPress}
-  >
-    <Text style={[
-      styles.texturePillText,
-      selected && styles.selectedTexturePillText
-    ]}>
-      {texture}
-    </Text>
-  </TouchableOpacity>
-));
-
-const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict-crop';
+// Soil texture categories
+const SOIL_TEXTURES = [
+  'Alluvial', 'Black', 'Cinder', 'Clay', 'Laterite',
+  'Loamy', 'Peat', 'Red', 'Sandy', 'Yellow'
+];
 
 const CropRecommendationScreen = ({ route }) => {
   // Animation values
@@ -55,27 +28,25 @@ const CropRecommendationScreen = ({ route }) => {
   const slideUpAnim = useRef(new Animated.Value(30)).current;
   const buttonScale = useRef(new Animated.Value(1)).current;
 
-  // State
+  // Get soil texture from navigation params
   const { soilTexture } = route.params || {};
-  const [selectedTexture, setSelectedTexture] = useState(null);
-  const [soilParams, setSoilParams] = useState({
-    texture: '',
-    N: '',
-    P: '',
-    K: '',
+  
+  // Form state
+  const [formData, setFormData] = useState({
+    soilTexture: '',
+    nitrogen: '',
+    phosphorus: '',
+    potassium: '',
     temperature: '',
     humidity: '',
-    ph: '',
-    rainfall: ''
+    rainfall: '',
+    ph: ''
   });
+  
   const [recommendations, setRecommendations] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-
-  const soilTextures = [
-    'Sandy', 'Clay', 'Silt', 'Loam', 'Peaty', 
-    'Chalky', 'Sandy Loam', 'Clay Loam', 'Silty Loam'
-  ];
+  const [selectedTexture, setSelectedTexture] = useState(null);
 
   useEffect(() => {
     // Entry animations
@@ -92,6 +63,7 @@ const CropRecommendationScreen = ({ route }) => {
       })
     ]).start();
 
+    // Set initial texture from navigation params
     if (soilTexture) {
       handleTextureSelect(soilTexture);
     }
@@ -99,8 +71,9 @@ const CropRecommendationScreen = ({ route }) => {
 
   const handleTextureSelect = (texture) => {
     setSelectedTexture(texture);
-    setSoilParams(prev => ({ ...prev, texture }));
+    setFormData(prev => ({ ...prev, soilTexture: texture }));
     
+    // Button press animation
     Animated.sequence([
       Animated.timing(buttonScale, {
         toValue: 0.95,
@@ -115,25 +88,50 @@ const CropRecommendationScreen = ({ route }) => {
     ]).start();
   };
 
+  const handleInputChange = (name, value) => {
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const validateForm = () => {
+    if (!formData.soilTexture) {
+      setError('Please select a soil texture');
+      return false;
+    }
+    
+    if (!formData.nitrogen || !formData.phosphorus || !formData.potassium) {
+      setError('Please enter all NPK values');
+      return false;
+    }
+    
+    if (!formData.ph || formData.ph < 0 || formData.ph > 14) {
+      setError('Please enter a valid pH (0-14)');
+      return false;
+    }
+    
+    return true;
+  };
+
   const getRecommendations = async () => {
+    if (!validateForm()) return;
+    
     setIsLoading(true);
     setError(null);
     
     try {
-      const response = await fetch(API_ENDPOINT, {
+      const response = await fetch('YOUR_API_ENDPOINT', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          ...soilParams,
-          N: parseFloat(soilParams.N),
-          P: parseFloat(soilParams.P),
-          K: parseFloat(soilParams.K),
-          temperature: parseFloat(soilParams.temperature),
-          humidity: parseFloat(soilParams.humidity),
-          ph: parseFloat(soilParams.ph),
-          rainfall: parseFloat(soilParams.rainfall)
+          soil_type: formData.soilTexture,
+          nitrogen: parseFloat(formData.nitrogen),
+          phosphorus: parseFloat(formData.phosphorus),
+          potassium: parseFloat(formData.potassium),
+          temperature: parseFloat(formData.temperature),
+          humidity: parseFloat(formData.humidity),
+          rainfall: parseFloat(formData.rainfall),
+          ph: parseFloat(formData.ph)
         }),
       });
 
@@ -148,7 +146,7 @@ const CropRecommendationScreen = ({ route }) => {
   };
 
   return (
-    <GradientView colors={['#f5f7fa', '#e4efe9']} style={styles.container}>
+    <View style={styles.container}>
       <Animated.ScrollView
         style={{ opacity: fadeAnim, transform: [{ translateY: slideUpAnim }] }}
         contentContainerStyle={styles.contentContainer}
@@ -163,78 +161,137 @@ const CropRecommendationScreen = ({ route }) => {
           )}
         </View>
 
-        {/* Main Form Card */}
+        {/* Main Form */}
         <View style={styles.formCard}>
-          {/* Soil Texture */}
+          {/* Soil Texture Selection */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Soil Texture</Text>
             <FlatList
               horizontal
-              data={soilTextures}
+              data={SOIL_TEXTURES}
               keyExtractor={item => item}
               renderItem={({ item }) => (
-                <TexturePill
-                  texture={item}
-                  selected={selectedTexture === item}
+                <TouchableOpacity
+                  style={[
+                    styles.texturePill,
+                    selectedTexture === item && styles.selectedTexturePill
+                  ]}
                   onPress={() => handleTextureSelect(item)}
-                />
+                >
+                  <Text style={[
+                    styles.texturePillText,
+                    selectedTexture === item && styles.selectedTexturePillText
+                  ]}>
+                    {item}
+                  </Text>
+                </TouchableOpacity>
               )}
               contentContainerStyle={styles.textureContainer}
               showsHorizontalScrollIndicator={false}
             />
-            <TextInput
-              style={styles.input}
-              value={selectedTexture ? '' : soilParams.texture}
-              onChangeText={(text) => {
-                setSelectedTexture(null);
-                setSoilParams(prev => ({ ...prev, texture: text }));
-              }}
-              placeholder="Or enter custom texture"
-              placeholderTextColor="#999"
-            />
           </View>
 
-          {/* Soil Nutrients */}
+          {/* NPK Values */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Soil Nutrients</Text>
+            <Text style={styles.sectionTitle}>Soil Nutrients (NPK)</Text>
             <View style={styles.inputRow}>
-              {[
-                { label: 'Nitrogen (N)', key: 'N', placeholder: 'ppm' },
-                { label: 'Phosphorus (P)', key: 'P', placeholder: 'ppm' },
-                { label: 'Potassium (K)', key: 'K', placeholder: 'ppm' }
-              ].map((item) => (
-                <View key={item.key} style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>{item.label}</Text>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={soilParams[item.key]}
-                    onChangeText={(text) => 
-                      setSoilParams(prev => ({ ...prev, [item.key]: text }))
-                    }
-                    placeholder={item.placeholder}
-                  />
-                </View>
-              ))}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Nitrogen (N)</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  value={formData.nitrogen}
+                  onChangeText={(text) => handleInputChange('nitrogen', text)}
+                  placeholder="ppm"
+                />
+              </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Phosphorus (P)</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  value={formData.phosphorus}
+                  onChangeText={(text) => handleInputChange('phosphorus', text)}
+                  placeholder="ppm"
+                />
+              </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Potassium (K)</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  value={formData.potassium}
+                  onChangeText={(text) => handleInputChange('potassium', text)}
+                  placeholder="ppm"
+                />
+              </View>
+            </View>
+          </View>
+
+          {/* Environmental Factors */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Environmental Factors</Text>
+            <View style={styles.inputRow}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Temperature (°C)</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  value={formData.temperature}
+                  onChangeText={(text) => handleInputChange('temperature', text)}
+                  placeholder="°C"
+                />
+              </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Humidity (%)</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  value={formData.humidity}
+                  onChangeText={(text) => handleInputChange('humidity', text)}
+                  placeholder="%"
+                />
+              </View>
+            </View>
+            <View style={styles.inputRow}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Rainfall (mm)</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  value={formData.rainfall}
+                  onChangeText={(text) => handleInputChange('rainfall', text)}
+                  placeholder="mm"
+                />
+              </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>pH Level (0-14)</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  value={formData.ph}
+                  onChangeText={(text) => handleInputChange('ph', text)}
+                  placeholder="0-14"
+                />
+              </View>
             </View>
           </View>
 
           {/* Submit Button */}
           <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
-            <TouchableOpacity 
+            <TouchableOpacity
+              style={styles.submitButton}
               onPress={getRecommendations}
               disabled={isLoading}
             >
-              <GradientButton colors={['#5D9C59', '#4A8C4A']}>
-                {isLoading ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <View style={styles.buttonContent}>
-                    <Icon name="search" size={18} color="white" />
-                    <Text style={styles.submitButtonText}>Get Recommendations</Text>
-                  </View>
-                )}
-              </GradientButton>
+              {isLoading ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <View style={styles.buttonContent}>
+                  <Icon name="search" size={18} color="white" />
+                  <Text style={styles.submitButtonText}>Get Recommendations</Text>
+                </View>
+              )}
             </TouchableOpacity>
           </Animated.View>
         </View>
@@ -244,19 +301,12 @@ const CropRecommendationScreen = ({ route }) => {
           <View style={styles.resultsContainer}>
             <Text style={styles.resultsTitle}>Recommended Crops</Text>
             {recommendations.map((crop, index) => (
-              <Animated.View 
-                key={index} 
-                style={styles.cropCard}
-                entering={Animated.spring(
-                  new Animated.Value(0),
-                  { toValue: 1, useNativeDriver: true }
-                )}
-              >
+              <View key={index} style={styles.cropCard}>
                 <View style={styles.cropHeader}>
                   <View style={styles.cropIcon}>
                     <Icon name="pagelines" size={24} color="#5D9C59" />
                   </View>
-                  <Text style={styles.cropName}>{crop.crop_name}</Text>
+                  <Text style={styles.cropName}>{crop.name}</Text>
                   <View style={styles.confidenceBadge}>
                     <Text style={styles.confidenceText}>
                       {Math.round(crop.confidence * 100)}%
@@ -264,20 +314,29 @@ const CropRecommendationScreen = ({ route }) => {
                   </View>
                 </View>
                 <Text style={styles.cropDescription}>
-                  Best grown in {crop.optimal_conditions}
+                  {crop.description}
                 </Text>
-              </Animated.View>
+              </View>
             ))}
           </View>
         )}
+
+        {/* Error Message */}
+        {error && (
+          <View style={styles.errorContainer}>
+            <Icon name="exclamation-circle" size={16} color="#D32F2F" />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
       </Animated.ScrollView>
-    </GradientView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#f5f7fa'
   },
   contentContainer: {
     padding: 20,
@@ -351,6 +410,7 @@ const styles = StyleSheet.create({
   inputRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginBottom: 15,
   },
   inputGroup: {
     flex: 1,
@@ -370,14 +430,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#EEEEEE',
   },
+  submitButton: {
+    backgroundColor: '#5D9C59',
+    borderRadius: 15,
+    padding: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
   buttonContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 15,
   },
   submitButtonText: {
     color: 'white',
     fontWeight: '600',
+    fontSize: 16,
     marginLeft: 10,
   },
   resultsContainer: {
@@ -435,6 +503,18 @@ const styles = StyleSheet.create({
   cropDescription: {
     color: '#616161',
     lineHeight: 22,
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 10,
+  },
+  errorText: {
+    color: '#D32F2F',
+    marginLeft: 8,
   },
 });
 
