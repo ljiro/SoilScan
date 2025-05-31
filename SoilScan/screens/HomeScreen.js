@@ -10,6 +10,8 @@ import {
   Alert,
   Platform,
   Modal,
+  Animated,
+  Easing
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImagePicker from 'expo-image-picker';
@@ -17,7 +19,7 @@ import * as ImagePicker from 'expo-image-picker';
 const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict_texture';
 
 const HomeScreen = ({ navigation }) => {
-  // State initialization with proper types
+  // State initialization
   const [image, setImage] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [results, setResults] = useState([]);
@@ -25,6 +27,14 @@ const HomeScreen = ({ navigation }) => {
   const [showRecommendationPrompt, setShowRecommendationPrompt] = useState(false);
   const [expandedFaqIndex, setExpandedFaqIndex] = useState(null);
   const [showLoadingModal, setShowLoadingModal] = useState(false);
+
+  // Animation values
+  const fadeAnim = useState(new Animated.Value(0))[0];
+  const slideUpAnim = useState(new Animated.Value(300))[0];
+  const cardScale = useState(new Animated.Value(0.9))[0];
+  const buttonScale = useState(new Animated.Value(1))[0];
+  const rotateAnim = useState(new Animated.Value(0))[0];
+  const shakeAnim = useState(new Animated.Value(0))[0];
 
   // FAQ data
   const faqs = [
@@ -46,8 +56,27 @@ const HomeScreen = ({ navigation }) => {
     }
   ];
 
-  // Request permissions on mount
   useEffect(() => {
+    // Entry animations
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 800,
+        useNativeDriver: true
+      }),
+      Animated.spring(slideUpAnim, {
+        toValue: 0,
+        friction: 8,
+        useNativeDriver: true
+      }),
+      Animated.spring(cardScale, {
+        toValue: 1,
+        friction: 5,
+        useNativeDriver: true
+      })
+    ]).start();
+
+    // Request permissions
     (async () => {
       if (Platform.OS !== 'web') {
         const { status: cameraStatus } = await ImagePicker.requestCameraPermissionsAsync();
@@ -63,14 +92,59 @@ const HomeScreen = ({ navigation }) => {
   }, []);
 
   const toggleFaq = (index) => {
+    if (expandedFaqIndex === index) {
+      Animated.timing(rotateAnim, {
+        toValue: 0,
+        duration: 300,
+        easing: Easing.ease,
+        useNativeDriver: true
+      }).start();
+    } else {
+      Animated.timing(rotateAnim, {
+        toValue: 1,
+        duration: 300,
+        easing: Easing.ease,
+        useNativeDriver: true
+      }).start();
+    }
     setExpandedFaqIndex(expandedFaqIndex === index ? null : index);
   };
+
+  const handlePressIn = () => {
+    Animated.spring(buttonScale, {
+      toValue: 0.95,
+      useNativeDriver: true
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(buttonScale, {
+      toValue: 1,
+      friction: 5,
+      useNativeDriver: true
+    }).start();
+  };
+
+  const rotateInterpolate = rotateAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg']
+  });
 
   const uploadImageToAPI = async (fileUri) => {
     try {
       setShowLoadingModal(true);
       setIsAnalyzing(true);
       
+      // Loading animation
+      Animated.loop(
+        Animated.timing(rotateAnim, {
+          toValue: 1,
+          duration: 1500,
+          easing: Easing.linear,
+          useNativeDriver: true
+        })
+      ).start();
+
       const formData = new FormData();
       formData.append('file', {
         uri: fileUri,
@@ -91,44 +165,51 @@ const HomeScreen = ({ navigation }) => {
       const data = await response.json();
       
       // Use mock data if API response is invalid
-      const responseData = Array.isArray(data?.predictions) ? data.predictions : [
-        {
-          name: "Loamy Soil",
-          confidence: 85,
-          color: "#8B4513",
-          description: "Loamy soil is a balanced mixture of sand, silt, and clay. It has good drainage and moisture retention, making it ideal for most plants.",
-          properties: ["Good drainage", "Retains moisture", "Rich in nutrients"]
-        },
-        {
-          name: "Sandy Soil",
-          confidence: 12,
-          color: "#F4A460",
-          description: "Sandy soil has large particles and drains quickly. It warms up fast in spring but doesn't hold nutrients well.",
-          properties: ["Fast drainage", "Low nutrients", "Easy to work"]
-        },
-        {
-          name: "Clay Soil",
-          confidence: 3,
-          color: "#5F4B32",
-          description: "Clay soil has very small particles that stick together. It holds water well but drains poorly and can be hard for roots to penetrate.",
-          properties: ["High nutrients", "Poor drainage", "Compacts easily"]
-        }
-      ];
+      const responseData = data.predictions;
 
       if (!Array.isArray(responseData) || responseData.length === 0) {
         throw new Error('No valid soil data received');
       }
 
+      // Success animation
+      Animated.parallel([
+        Animated.spring(cardScale, {
+          toValue: 1.05,
+          friction: 3,
+          useNativeDriver: true
+        }),
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true
+        })
+      ]).start(() => {
+        Animated.spring(cardScale, {
+          toValue: 1,
+          friction: 5,
+          useNativeDriver: true
+        }).start();
+      });
+
       setResults(responseData);
-      setSelectedTexture(responseData[0]); // Default to first result
+      setSelectedTexture(responseData[0]);
       setShowRecommendationPrompt(true);
       
     } catch (error) {
+      // Error shake animation
+      Animated.sequence([
+        Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true })
+      ]).start();
+      
       console.error('Upload error:', error);
       Alert.alert('Error', error.message || 'Failed to analyze soil. Please try again.');
     } finally {
       setShowLoadingModal(false);
       setIsAnalyzing(false);
+      rotateAnim.setValue(0);
     }
   };
 
@@ -179,93 +260,108 @@ const HomeScreen = ({ navigation }) => {
   const handleRecommendationResponse = (response) => {
     setShowRecommendationPrompt(false);
     if (response && selectedTexture) {
-      navigation.navigate('CropRecommendationScreen', { 
+      navigation.navigate('CropRecommendation', { 
         soilTexture: selectedTexture.name 
       });
     }
   };
 
   return (
-    <ScrollView style={styles.container}>
-      {/* Scan Soil Sample Section */}
-      <View style={styles.section}>
+    <Animated.ScrollView 
+      style={[styles.container, { opacity: fadeAnim }]}
+      contentContainerStyle={styles.contentContainer}
+    >
+      {/* Hero Section */}
+      <Animated.View style={[styles.heroContainer, { transform: [{ translateY: slideUpAnim }] }]}>
+        <Text style={styles.heroTitle}>SoilScan</Text>
+        <Text style={styles.heroSubtitle}>Analyze your soil with AI</Text>
+      </Animated.View>
+
+      {/* Scan Card */}
+      <Animated.View style={[
+        styles.scanCard, 
+        { 
+          transform: [
+            { translateY: slideUpAnim },
+            { scale: cardScale }
+          ] 
+        }
+      ]}>
         <Text style={styles.sectionTitle}>Scan Soil Sample</Text>
+        <Text style={styles.sectionSubtitle}>Get instant soil analysis</Text>
 
         <View style={styles.scanPreview}>
           {image ? (
             <Image source={{ uri: image }} style={styles.image} />
           ) : (
             <View style={styles.placeholder}>
-              <Icon
-                name="camera"
-                size={48}
-                color="#1A3C40"
-                style={styles.placeholderIcon}
-              />
+              <Animated.View style={{ transform: [{ rotate: rotateInterpolate }] }}>
+                <Icon
+                  name="camera"
+                  size={48}
+                  color="#FFFFFF"
+                  style={styles.placeholderIcon}
+                />
+              </Animated.View>
               <Text style={styles.placeholderText}>No image captured</Text>
             </View>
           )}
 
           {isAnalyzing && (
             <View style={styles.loadingOverlay}>
-              <ActivityIndicator size="large" color="#5D9C59" />
+              <Animated.View style={{ transform: [{ rotate: rotateInterpolate }] }}>
+                <ActivityIndicator size="large" color="#FFFFFF" />
+              </Animated.View>
               <Text style={styles.loadingText}>Analyzing soil texture...</Text>
             </View>
           )}
         </View>
 
         <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.primaryButton} onPress={handleCapture}>
-            <Icon name="camera" size={18} color="white" style={styles.buttonIcon} />
-            <Text style={styles.buttonText}>Capture</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.outlineButton} onPress={handleUpload}>
-            <Icon name="upload" size={18} color="#5D9C59" style={styles.buttonIcon} />
-            <Text style={[styles.buttonText, { color: '#5D9C59' }]}>Upload</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* FAQ Section */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Icon name="question-circle" size={20} color="#5D9C59" style={styles.sectionIcon} />
-          <Text style={styles.sectionTitle}>Frequently Asked Questions</Text>
-        </View>
-
-        {faqs.map((faq, index) => (
-          <View key={index} style={styles.faqItem}>
+          <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
             <TouchableOpacity 
-              style={styles.faqQuestion} 
-              onPress={() => toggleFaq(index)}
+              style={styles.primaryButton} 
+              onPress={handleCapture}
+              onPressIn={handlePressIn}
+              onPressOut={handlePressOut}
+              activeOpacity={0.8}
             >
-              <Text style={styles.faqQuestionText}>{faq.question}</Text>
-              <Icon 
-                name={expandedFaqIndex === index ? "chevron-up" : "chevron-down"} 
-                size={16} 
-                color="#5D9C59" 
-              />
+              <Icon name="camera" size={18} color="white" style={styles.buttonIcon} />
+              <Text style={styles.buttonText}>Capture</Text>
             </TouchableOpacity>
-            
-            {expandedFaqIndex === index && (
-              <View style={styles.faqAnswer}>
-                <Text style={styles.faqAnswerText}>{faq.answer}</Text>
-              </View>
-            )}
-          </View>
-        ))}
-      </View>
+          </Animated.View>
 
-      {/* Results Sections */}
+          <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+            <TouchableOpacity 
+              style={styles.secondaryButton} 
+              onPress={handleUpload}
+              onPressIn={handlePressIn}
+              onPressOut={handlePressOut}
+              activeOpacity={0.8}
+            >
+              <Icon name="image" size={18} color="#5D9C59" style={styles.buttonIcon} />
+              <Text style={[styles.buttonText, { color: '#5D9C59' }]}>Gallery</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </View>
+      </Animated.View>
+
+      {/* Results Section */}
       {selectedTexture && (
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Icon name="leaf" size={20} color="#5D9C59" style={styles.sectionIcon} />
-            <Text style={styles.sectionTitle}>Primary Soil Texture</Text>
-          </View>
-
-          <View style={styles.primaryResultCard}>
+        <Animated.View 
+          style={[
+            styles.resultsContainer, 
+            { opacity: fadeAnim }
+          ]}
+        >
+          <Text style={styles.resultsTitle}>Analysis Results</Text>
+          
+          <Animated.View 
+            style={[
+              styles.primaryResultCard,
+              { transform: [{ scale: cardScale }] }
+            ]}
+          >
             <View style={styles.textureHeader}>
               <View style={[styles.colorSwatch, { backgroundColor: selectedTexture.color }]} />
               <View>
@@ -276,11 +372,15 @@ const HomeScreen = ({ navigation }) => {
               </View>
             </View>
 
-            <View style={styles.confidenceBar}>
+            <View style={styles.progressContainer}>
+              <View style={styles.progressBackground} />
               <View
                 style={[
-                  styles.confidenceFill,
-                  { width: `${selectedTexture.confidence}%`, backgroundColor: selectedTexture.color },
+                  styles.progressFill,
+                  { 
+                    width: `${selectedTexture.confidence}%`, 
+                    backgroundColor: selectedTexture.color,
+                  },
                 ]}
               />
             </View>
@@ -289,58 +389,80 @@ const HomeScreen = ({ navigation }) => {
 
             <View style={styles.propertiesContainer}>
               {selectedTexture.properties?.map((prop, i) => (
-                <View key={i} style={[styles.propertyTag, { borderColor: selectedTexture.color }]}>
-                  <Text style={styles.propertyText}>{prop}</Text>
+                <View key={i} style={[styles.propertyTag, { backgroundColor: `${selectedTexture.color}20` }]}>
+                  <Text style={[styles.propertyText, { color: selectedTexture.color }]}>{prop}</Text>
                 </View>
               ))}
             </View>
 
             <TouchableOpacity
-              style={[styles.cropRecommendationButton, { borderColor: selectedTexture.color }]}
+              style={[styles.actionButton, { backgroundColor: selectedTexture.color }]}
               onPress={() => handleRecommendationResponse(true)}
+              activeOpacity={0.8}
             >
-              <Text style={[styles.cropRecommendationText, { color: selectedTexture.color }]}>
+              <Text style={styles.actionButtonText}>
                 Get Crop Recommendations
               </Text>
-              <Icon name="arrow-right" size={14} color={selectedTexture.color} />
+              <Icon name="arrow-right" size={14} color="white" />
             </TouchableOpacity>
-          </View>
-        </View>
+          </Animated.View>
+        </Animated.View>
       )}
 
-      {Array.isArray(results) && results.length > 1 && (
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Icon name="list" size={20} color="#5D9C59" style={styles.sectionIcon} />
-            <Text style={styles.sectionTitle}>Alternative Textures</Text>
-          </View>
-
-          {results.slice(1, 5).map((item, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.textureCard}
-              onPress={() => setSelectedTexture(item)}
+      {/* FAQ Section */}
+      <Animated.View style={[styles.faqContainer, { opacity: fadeAnim }]}>
+        <Text style={styles.sectionTitle}>Need Help?</Text>
+        <Text style={styles.sectionSubtitle}>Frequently asked questions</Text>
+        
+        {faqs.map((faq, index) => (
+          <Animated.View 
+            key={index}
+            style={{
+              opacity: fadeAnim,
+              transform: [{
+                translateY: fadeAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [50 * (index + 1), 0]
+                })
+              }]
+            }}
+          >
+            <TouchableOpacity 
+              style={styles.faqCard}
+              onPress={() => toggleFaq(index)}
+              activeOpacity={0.7}
             >
-              <View style={styles.textureHeader}>
-                <View style={[styles.colorSwatch, { backgroundColor: item.color }]} />
-                <View>
-                  <Text style={styles.textureType}>{item.name}</Text>
-                  <Text style={styles.confidenceValue}>{item.confidence}%</Text>
-                </View>
+              <View style={styles.faqHeader}>
+                <Text style={styles.faqQuestionText}>{faq.question}</Text>
+                <Animated.View style={{ transform: [{ rotate: rotateInterpolate }] }}>
+                  <Icon 
+                    name="plus" 
+                    size={16} 
+                    color="#5D9C59" 
+                  />
+                </Animated.View>
               </View>
-
-              <View style={styles.confidenceBar}>
-                <View
+              
+              {expandedFaqIndex === index && (
+                <Animated.Text 
                   style={[
-                    styles.confidenceFill,
-                    { width: `${item.confidence}%`, backgroundColor: item.color },
+                    styles.faqAnswerText,
+                    {
+                      opacity: fadeAnim,
+                      height: fadeAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, 'auto']
+                      })
+                    }
                   ]}
-                />
-              </View>
+                >
+                  {faq.answer}
+                </Animated.Text>
+              )}
             </TouchableOpacity>
-          ))}
-        </View>
-      )}
+          </Animated.View>
+        ))}
+      </Animated.View>
 
       {/* Recommendation Prompt Modal */}
       <Modal
@@ -350,7 +472,18 @@ const HomeScreen = ({ navigation }) => {
         onRequestClose={() => setShowRecommendationPrompt(false)}
       >
         <View style={styles.promptContainer}>
-          <View style={styles.promptContent}>
+          <Animated.View 
+            style={[
+              styles.promptContent,
+              { 
+                transform: [{ scale: fadeAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.9, 1]
+                })}],
+                opacity: fadeAnim
+              }
+            ]}
+          >
             <Text style={styles.promptTitle}>Soil Analysis Complete</Text>
             <Text style={styles.promptText}>
               The detected soil texture is: {selectedTexture?.name || 'Unknown'}
@@ -362,17 +495,19 @@ const HomeScreen = ({ navigation }) => {
               <TouchableOpacity
                 style={styles.promptButtonNo}
                 onPress={() => handleRecommendationResponse(false)}
+                activeOpacity={0.7}
               >
                 <Text style={styles.promptButtonText}>Not Now</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.promptButtonYes}
                 onPress={() => handleRecommendationResponse(true)}
+                activeOpacity={0.7}
               >
                 <Text style={[styles.promptButtonText, { color: 'white' }]}>Yes</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
 
@@ -384,104 +519,138 @@ const HomeScreen = ({ navigation }) => {
         onRequestClose={() => {}}
       >
         <View style={styles.loadingModalContainer}>
-          <View style={styles.loadingModalContent}>
-            <ActivityIndicator size="large" color="#5D9C59" />
+          <Animated.View 
+            style={[
+              styles.loadingModalContent,
+              { 
+                opacity: fadeAnim,
+                transform: [{ scale: fadeAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.9, 1]
+                })}] 
+              }
+            ]}
+          >
+            <Animated.View style={{ transform: [{ rotate: rotateInterpolate }] }}>
+              <ActivityIndicator size="large" color="#5D9C59" />
+            </Animated.View>
             <Text style={styles.loadingModalText}>Analyzing Soil Sample</Text>
             <Text style={styles.loadingModalSubtext}>Please wait while we process your image...</Text>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
-    </ScrollView>
+    </Animated.ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#F8F9FA',
   },
-  section: {
+  contentContainer: {
+    paddingBottom: 30,
+  },
+  heroContainer: {
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 16,
+  },
+  heroTitle: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#1A3C40',
+    marginBottom: 4,
+  },
+  heroSubtitle: {
+    fontSize: 16,
+    color: '#6C757D',
+    fontWeight: '500',
+  },
+  scanCard: {
     backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    borderRadius: 24,
+    padding: 24,
+    marginHorizontal: 16,
+    marginBottom: 24,
+    shadowColor: '#1A3C40',
+    shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowRadius: 16,
+    elevation: 5,
   },
   sectionTitle: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#1A3C40',
+    marginBottom: 4,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#6C757D',
     marginBottom: 16,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  sectionIcon: {
-    marginRight: 8,
+    fontWeight: '500',
   },
   scanPreview: {
     width: '100%',
     height: 200,
-    borderRadius: 12,
-    backgroundColor: '#EDF7ED',
+    borderRadius: 16,
+    backgroundColor: '#5D9C59',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
     overflow: 'hidden',
   },
-  image: {
-    width: '100%',
-    height: '100%',
-  },
   placeholder: {
     alignItems: 'center',
   },
   placeholderIcon: {
-    marginBottom: 8,
+    marginBottom: 12,
   },
   placeholderText: {
-    color: '#1A3C40',
+    color: 'rgba(255,255,255,0.8)',
     fontSize: 16,
+    fontWeight: '500',
   },
   loadingOverlay: {
     position: 'absolute',
     width: '100%',
     height: '100%',
-    backgroundColor: 'rgba(255,255,255,0.8)',
+    backgroundColor: 'rgba(0,0,0,0.3)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   loadingText: {
-    marginTop: 8,
-    color: '#1A3C40',
+    marginTop: 12,
+    color: 'white',
+    fontSize: 16,
   },
   buttonContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    gap: 12,
   },
   primaryButton: {
     flex: 1,
     backgroundColor: '#5D9C59',
-    borderRadius: 8,
-    padding: 14,
+    borderRadius: 12,
+    padding: 16,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 8,
+    shadowColor: '#5D9C59',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
   },
-  outlineButton: {
+  secondaryButton: {
     flex: 1,
     backgroundColor: 'white',
-    borderRadius: 8,
-    padding: 14,
+    borderRadius: 12,
+    padding: 16,
     borderWidth: 1,
-    borderColor: '#5D9C59',
+    borderColor: '#E9ECEF',
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
@@ -494,23 +663,42 @@ const styles = StyleSheet.create({
   buttonIcon: {
     marginRight: 8,
   },
+  resultsContainer: {
+    paddingHorizontal: 16,
+    marginBottom: 24,
+  },
+  resultsTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1A3C40',
+    marginBottom: 16,
+    paddingHorizontal: 8,
+  },
   primaryResultCard: {
-    backgroundColor: '#f9f9f9',
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: '#1A3C40',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 5,
   },
   textureHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
   },
   colorSwatch: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    marginRight: 12,
-    borderWidth: 1,
-    borderColor: '#ddd',
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    marginRight: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   primaryTextureName: {
     fontSize: 18,
@@ -519,61 +707,96 @@ const styles = StyleSheet.create({
   },
   confidenceValue: {
     fontSize: 14,
-    color: '#666',
+    color: '#6C757D',
+    marginTop: 4,
   },
-  confidenceBar: {
+  progressContainer: {
     height: 8,
-    backgroundColor: '#EEE',
+    backgroundColor: '#E9ECEF',
     borderRadius: 4,
-    marginBottom: 12,
+    marginBottom: 16,
     overflow: 'hidden',
+    position: 'relative',
   },
-  confidenceFill: {
+  progressBackground: {
+    position: 'absolute',
+    width: '100%',
     height: '100%',
+    backgroundColor: '#E9ECEF',
+    borderRadius: 4,
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 4,
   },
   description: {
-    color: '#666',
-    marginBottom: 12,
-    lineHeight: 20,
+    color: '#6C757D',
+    marginBottom: 16,
+    lineHeight: 22,
+    fontSize: 14,
   },
   propertiesContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: 12,
+    marginBottom: 20,
+    gap: 8,
   },
   propertyTag: {
-    padding: 8,
-    borderRadius: 4,
-    borderWidth: 1,
-    marginRight: 8,
-    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
   },
   propertyText: {
-    color: '#1A3C40',
     fontSize: 12,
+    fontWeight: '600',
   },
-  cropRecommendationButton: {
+  actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
+    padding: 16,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
   },
-  cropRecommendationText: {
+  actionButtonText: {
     fontWeight: '600',
     marginRight: 8,
+    color: 'white',
   },
-  textureCard: {
-    backgroundColor: '#f9f9f9',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
+  faqContainer: {
+    paddingHorizontal: 16,
   },
-  textureType: {
+  faqCard: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#1A3C40',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  faqHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  faqQuestionText: {
+    flex: 1,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#1A3C40',
+  },
+  faqAnswerText: {
+    color: '#6C757D',
+    lineHeight: 22,
+    marginTop: 12,
+    fontSize: 14,
   },
   promptContainer: {
     flex: 1,
@@ -583,19 +806,19 @@ const styles = StyleSheet.create({
   },
   promptContent: {
     backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 20,
+    borderRadius: 20,
+    padding: 24,
     width: '80%',
   },
   promptTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: '700',
     color: '#1A3C40',
     marginBottom: 12,
     textAlign: 'center',
   },
   promptText: {
-    color: '#666',
+    color: '#6C757D',
     marginBottom: 8,
     textAlign: 'center',
     lineHeight: 22,
@@ -604,54 +827,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 16,
+    gap: 12,
   },
   promptButtonNo: {
     flex: 1,
-    padding: 12,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#5D9C59',
-    borderRadius: 8,
-    marginRight: 8,
+    borderRadius: 12,
   },
   promptButtonYes: {
     flex: 1,
     backgroundColor: '#5D9C59',
-    padding: 12,
-    borderRadius: 8,
-    marginLeft: 8,
+    padding: 14,
+    borderRadius: 12,
   },
   promptButtonText: {
     textAlign: 'center',
     fontWeight: '600',
   },
-  // FAQ Styles
-  faqItem: {
-    marginBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-    paddingBottom: 12,
-  },
-  faqQuestion: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  faqQuestionText: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#1A3C40',
-  },
-  faqAnswer: {
-    paddingVertical: 8,
-    paddingLeft: 8,
-  },
-  faqAnswerText: {
-    color: '#666',
-    lineHeight: 20,
-  },
-   loadingModalContainer: {
+  loadingModalContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
@@ -659,7 +854,7 @@ const styles = StyleSheet.create({
   },
   loadingModalContent: {
     backgroundColor: 'white',
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 30,
     width: '80%',
     alignItems: 'center',
@@ -673,7 +868,7 @@ const styles = StyleSheet.create({
   },
   loadingModalSubtext: {
     fontSize: 14,
-    color: '#666',
+    color: '#6C757D',
     marginTop: 8,
     textAlign: 'center',
   },
