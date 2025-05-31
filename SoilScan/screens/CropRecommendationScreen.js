@@ -7,12 +7,45 @@ import {
   TouchableOpacity, 
   TextInput, 
   ActivityIndicator,
-  Alert,
   Animated,
-  Easing
+  Easing,
+  FlatList,
+  Dimensions
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
-import LinearGradient from 'react-native-linear-gradient';
+
+const { width } = Dimensions.get('window');
+
+// Gradient Fallback Components
+const GradientView = ({ colors, style, children }) => (
+  <View style={[style, { backgroundColor: colors[0] }]}>
+    {children}
+  </View>
+);
+
+const GradientButton = ({ colors, style, children }) => (
+  <View style={[style, { backgroundColor: colors[0], borderRadius: 15 }]}>
+    {children}
+  </View>
+);
+
+// Texture Pill Component
+const TexturePill = React.memo(({ texture, selected, onPress }) => (
+  <TouchableOpacity
+    style={[
+      styles.texturePill,
+      selected && styles.selectedTexturePill
+    ]}
+    onPress={onPress}
+  >
+    <Text style={[
+      styles.texturePillText,
+      selected && styles.selectedTexturePillText
+    ]}>
+      {texture}
+    </Text>
+  </TouchableOpacity>
+));
 
 const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict-crop';
 
@@ -20,12 +53,10 @@ const CropRecommendationScreen = ({ route }) => {
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideUpAnim = useRef(new Animated.Value(30)).current;
-  const cardScale = useRef(new Animated.Value(0.95)).current;
   const buttonScale = useRef(new Animated.Value(1)).current;
 
-  // Get soil texture from navigation params
+  // State
   const { soilTexture } = route.params || {};
-  
   const [selectedTexture, setSelectedTexture] = useState(null);
   const [soilParams, setSoilParams] = useState({
     texture: '',
@@ -37,11 +68,10 @@ const CropRecommendationScreen = ({ route }) => {
     ph: '',
     rainfall: ''
   });
-  
   const [recommendations, setRecommendations] = useState([]);
-  const [isSubmitted, setIsSubmitted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+
   const soilTextures = [
     'Sandy', 'Clay', 'Silt', 'Loam', 'Peaty', 
     'Chalky', 'Sandy Loam', 'Clay Loam', 'Silty Loam'
@@ -59,32 +89,18 @@ const CropRecommendationScreen = ({ route }) => {
         toValue: 0,
         friction: 8,
         useNativeDriver: true
-      }),
-      Animated.spring(cardScale, {
-        toValue: 1,
-        friction: 5,
-        useNativeDriver: true
       })
     ]).start();
 
-    // Handle incoming soil texture
     if (soilTexture) {
-      setSelectedTexture(soilTexture);
-      setSoilParams(prev => ({
-        ...prev,
-        texture: soilTexture
-      }));
+      handleTextureSelect(soilTexture);
     }
   }, [soilTexture]);
 
   const handleTextureSelect = (texture) => {
     setSelectedTexture(texture);
-    setSoilParams(prev => ({
-      ...prev,
-      texture: texture
-    }));
+    setSoilParams(prev => ({ ...prev, texture }));
     
-    // Animation feedback
     Animated.sequence([
       Animated.timing(buttonScale, {
         toValue: 0.95,
@@ -99,30 +115,10 @@ const CropRecommendationScreen = ({ route }) => {
     ]).start();
   };
 
-  const handleInputChange = (name, value) => {
-    if (name === 'texture') setSelectedTexture(null);
-    setSoilParams(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
-
   const getRecommendations = async () => {
-    if (!validateInputs()) return;
-
     setIsLoading(true);
     setError(null);
     
-    // Loading animation
-    Animated.loop(
-      Animated.timing(cardScale, {
-        toValue: 1.02,
-        duration: 500,
-        easing: Easing.linear,
-        useNativeDriver: true
-      })
-    ).start();
-
     try {
       const response = await fetch(API_ENDPOINT, {
         method: 'POST',
@@ -130,7 +126,7 @@ const CropRecommendationScreen = ({ route }) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          texture: soilParams.texture,
+          ...soilParams,
           N: parseFloat(soilParams.N),
           P: parseFloat(soilParams.P),
           K: parseFloat(soilParams.K),
@@ -143,49 +139,16 @@ const CropRecommendationScreen = ({ route }) => {
 
       const data = await response.json();
       setRecommendations(data.predictions || []);
-      setIsSubmitted(true);
-
-      // Success animation
-      Animated.parallel([
-        Animated.spring(cardScale, {
-          toValue: 1.05,
-          friction: 3,
-          useNativeDriver: true
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true
-        })
-      ]).start(() => {
-        Animated.spring(cardScale, {
-          toValue: 1,
-          friction: 5,
-          useNativeDriver: true
-        }).start();
-      });
-
-    } catch (err) {
-      console.error('Error:', err);
-      setError(err.message || 'Failed to get recommendations');
       
-      // Error shake animation
-      Animated.sequence([
-        Animated.timing(slideUpAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
-        Animated.timing(slideUpAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
-        Animated.timing(slideUpAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
-        Animated.timing(slideUpAnim, { toValue: 0, duration: 50, useNativeDriver: true })
-      ]).start();
+    } catch (err) {
+      setError(err.message || 'Failed to get recommendations');
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <LinearGradient 
-      colors={['#f5f7fa', '#e4efe9']} 
-      style={styles.container}
-    >
+    <GradientView colors={['#f5f7fa', '#e4efe9']} style={styles.container}>
       <Animated.ScrollView
         style={{ opacity: fadeAnim, transform: [{ translateY: slideUpAnim }] }}
         contentContainerStyle={styles.contentContainer}
@@ -201,60 +164,37 @@ const CropRecommendationScreen = ({ route }) => {
         </View>
 
         {/* Main Form Card */}
-        <Animated.View 
-          style={[
-            styles.formCard,
-            { 
-              transform: [{ scale: cardScale }],
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 10 },
-              shadowOpacity: 0.1,
-              shadowRadius: 20,
-              elevation: 10
-            }
-          ]}
-        >
-          {/* Soil Texture Selection */}
+        <View style={styles.formCard}>
+          {/* Soil Texture */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Soil Texture</Text>
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false}
+            <FlatList
+              horizontal
+              data={soilTextures}
+              keyExtractor={item => item}
+              renderItem={({ item }) => (
+                <TexturePill
+                  texture={item}
+                  selected={selectedTexture === item}
+                  onPress={() => handleTextureSelect(item)}
+                />
+              )}
               contentContainerStyle={styles.textureContainer}
-            >
-              {soilTextures.map((texture) => (
-                <Animated.View 
-                  key={texture}
-                  style={{ transform: [{ scale: selectedTexture === texture ? 1.05 : 1 }] }}
-                >
-                  <TouchableOpacity
-                    style={[
-                      styles.texturePill,
-                      selectedTexture === texture && styles.selectedTexturePill
-                    ]}
-                    onPress={() => handleTextureSelect(texture)}
-                  >
-                    <Text style={[
-                      styles.texturePillText,
-                      selectedTexture === texture && styles.selectedTexturePillText
-                    ]}>
-                      {texture}
-                    </Text>
-                  </TouchableOpacity>
-                </Animated.View>
-              ))}
-            </ScrollView>
-            
+              showsHorizontalScrollIndicator={false}
+            />
             <TextInput
               style={styles.input}
               value={selectedTexture ? '' : soilParams.texture}
-              onChangeText={(text) => handleInputChange('texture', text)}
+              onChangeText={(text) => {
+                setSelectedTexture(null);
+                setSoilParams(prev => ({ ...prev, texture: text }));
+              }}
               placeholder="Or enter custom texture"
               placeholderTextColor="#999"
             />
           </View>
 
-          {/* Nutrient Inputs */}
+          {/* Soil Nutrients */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Soil Nutrients</Text>
             <View style={styles.inputRow}>
@@ -269,114 +209,47 @@ const CropRecommendationScreen = ({ route }) => {
                     style={styles.input}
                     keyboardType="numeric"
                     value={soilParams[item.key]}
-                    onChangeText={(text) => handleInputChange(item.key, text)}
+                    onChangeText={(text) => 
+                      setSoilParams(prev => ({ ...prev, [item.key]: text }))
+                    }
                     placeholder={item.placeholder}
                   />
                 </View>
               ))}
             </View>
-          </View>
-
-          {/* Environment Inputs */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Environment</Text>
-            <View style={styles.inputRow}>
-              {[
-                { label: 'Temperature', key: 'temperature', placeholder: '°C' },
-                { label: 'Humidity', key: 'humidity', placeholder: '%' },
-                { label: 'Rainfall', key: 'rainfall', placeholder: 'mm' }
-              ].map((item) => (
-                <View key={item.key} style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>{item.label}</Text>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={soilParams[item.key]}
-                    onChangeText={(text) => handleInputChange(item.key, text)}
-                    placeholder={item.placeholder}
-                  />
-                </View>
-              ))}
-            </View>
-          </View>
-
-          {/* pH Scale */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Soil pH Level</Text>
-            <View style={styles.phContainer}>
-              <Text style={styles.phLabel}>Acidic</Text>
-              <View style={styles.phScale}>
-                {Array.from({ length: 15 }).map((_, i) => (
-                  <View 
-                    key={i}
-                    style={[
-                      styles.phSegment,
-                      i < 7 && styles.phAcidic,
-                      i === 7 && styles.phNeutral,
-                      i > 7 && styles.phAlkaline,
-                      parseFloat(soilParams.ph) === i && styles.phSelected
-                    ]}
-                  />
-                ))}
-              </View>
-              <Text style={styles.phLabel}>Alkaline</Text>
-            </View>
-            <TextInput
-              style={styles.input}
-              keyboardType="numeric"
-              value={soilParams.ph}
-              onChangeText={(text) => handleInputChange('ph', text)}
-              placeholder="Enter pH (0-14)"
-            />
           </View>
 
           {/* Submit Button */}
           <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
             <TouchableOpacity 
-              style={styles.submitButton}
               onPress={getRecommendations}
               disabled={isLoading}
             >
-              <LinearGradient
-                colors={['#5D9C59', '#4A8C4A']}
-                style={styles.gradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
+              <GradientButton colors={['#5D9C59', '#4A8C4A']}>
                 {isLoading ? (
                   <ActivityIndicator color="white" />
                 ) : (
-                  <>
-                    <Icon name="search" size={18} color="white" style={styles.buttonIcon} />
+                  <View style={styles.buttonContent}>
+                    <Icon name="search" size={18} color="white" />
                     <Text style={styles.submitButtonText}>Get Recommendations</Text>
-                  </>
+                  </View>
                 )}
-              </LinearGradient>
+              </GradientButton>
             </TouchableOpacity>
           </Animated.View>
-        </Animated.View>
+        </View>
 
         {/* Results Section */}
-        {isSubmitted && (
-          <Animated.View 
-            style={[
-              styles.resultsContainer,
-              { opacity: fadeAnim }
-            ]}
-          >
+        {recommendations.length > 0 && (
+          <View style={styles.resultsContainer}>
             <Text style={styles.resultsTitle}>Recommended Crops</Text>
-            
             {recommendations.map((crop, index) => (
               <Animated.View 
-                key={index}
+                key={index} 
                 style={styles.cropCard}
                 entering={Animated.spring(
                   new Animated.Value(0),
-                  {
-                    toValue: 1,
-                    friction: 5,
-                    useNativeDriver: true
-                  }
+                  { toValue: 1, useNativeDriver: true }
                 )}
               >
                 <View style={styles.cropHeader}>
@@ -395,10 +268,10 @@ const CropRecommendationScreen = ({ route }) => {
                 </Text>
               </Animated.View>
             ))}
-          </Animated.View>
+          </View>
         )}
       </Animated.ScrollView>
-    </LinearGradient>
+    </GradientView>
   );
 };
 
@@ -437,6 +310,11 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     padding: 25,
     marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    elevation: 5
   },
   section: {
     marginBottom: 20,
@@ -448,7 +326,6 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   textureContainer: {
-    flexDirection: 'row',
     paddingBottom: 10,
   },
   texturePill: {
@@ -493,60 +370,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#EEEEEE',
   },
-  phContainer: {
+  buttonContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 15,
-  },
-  phScale: {
-    flex: 1,
-    height: 20,
-    flexDirection: 'row',
-    marginHorizontal: 10,
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  phSegment: {
-    flex: 1,
-    height: '100%',
-  },
-  phAcidic: {
-    backgroundColor: '#FF7043',
-  },
-  phNeutral: {
-    backgroundColor: '#66BB6A',
-  },
-  phAlkaline: {
-    backgroundColor: '#42A5F5',
-  },
-  phSelected: {
-    borderTopWidth: 3,
-    borderBottomWidth: 3,
-    borderColor: '#1A3C40',
-  },
-  phLabel: {
-    fontSize: 12,
-    color: '#757575',
-  },
-  submitButton: {
-    borderRadius: 15,
-    overflow: 'hidden',
-    marginTop: 10,
-  },
-  gradient: {
-    padding: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
+    padding: 15,
   },
   submitButtonText: {
     color: 'white',
     fontWeight: '600',
-    fontSize: 16,
     marginLeft: 10,
-  },
-  buttonIcon: {
-    marginRight: 8,
   },
   resultsContainer: {
     backgroundColor: 'white',
