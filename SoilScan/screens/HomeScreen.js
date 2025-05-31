@@ -17,7 +17,7 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImagePicker from 'expo-image-picker';
 
-const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/debug_predict';
+const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict_texture';
 
 const HomeScreen = ({ navigation }) => {
   // State initialization
@@ -272,7 +272,7 @@ const HomeScreen = ({ navigation }) => {
   const handleRecommendationResponse = (response) => {
     setShowRecommendationPrompt(false);
     if (response && selectedTexture) {
-      navigation.navigate('CropRecommendation', { 
+      navigation.navigate('CropRecommendationScreen.js', { 
         soilTexture: selectedTexture.name 
       });
     }
