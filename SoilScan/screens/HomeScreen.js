@@ -17,13 +17,13 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImagePicker from 'expo-image-picker';
 
-const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict_texture';
+const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/debug_predict';
 
 const HomeScreen = ({ navigation }) => {
   // State initialization
   const [image, setImage] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [results, setResults] = useState([]);
+  const [results, setResults] = useState(null);
   const [selectedTexture, setSelectedTexture] = useState(null);
   const [showRecommendationPrompt, setShowRecommendationPrompt] = useState(false);
   const [expandedFaqIndex, setExpandedFaqIndex] = useState(null);
@@ -36,7 +36,6 @@ const HomeScreen = ({ navigation }) => {
   const buttonScale = useState(new Animated.Value(1))[0];
   const rotateAnim = useState(new Animated.Value(0))[0];
   const shakeAnim = useState(new Animated.Value(0))[0];
-
 
   // FAQ data
   const faqs = [
@@ -159,25 +158,20 @@ const HomeScreen = ({ navigation }) => {
       const data = await response.json();
       
       // Validate API response structure
-      if (!data || !data.predictions || !Array.isArray(data.predictions)) {
+      if (!data || !data.predicted_class || !data.confidence) {
         console.log('Invalid API response structure:', data);
         throw new Error('Received unexpected data format from server');
       }
 
-      // Validate each prediction item
-      const validPredictions = data.predictions.filter(prediction => 
-        prediction && 
-        prediction.name && 
-        typeof prediction.confidence === 'number' &&
-        prediction.color &&
-        prediction.description &&
-        Array.isArray(prediction.properties)
-      );
-
-      if (validPredictions.length === 0) {
-        console.log('No valid predictions found in:', data.predictions);
-        throw new Error('No valid soil predictions received');
-      }
+      // Format the response to match our expected structure
+      const formattedResult = {
+        name: data.predicted_class,
+        confidence: Math.round(data.confidence * 100), // Convert to percentage
+        description: data.description,
+        properties: data.properties || [],
+        color: data.color || '#FFFFFF',
+        all_confidences: data.all_confidences || {}
+      };
 
       // Success animation
       Animated.parallel([
@@ -199,8 +193,8 @@ const HomeScreen = ({ navigation }) => {
         }).start();
       });
 
-      setResults(validPredictions);
-      setSelectedTexture(validPredictions[0]);
+      setResults(formattedResult);
+      setSelectedTexture(formattedResult);
       setShowRecommendationPrompt(true);
       
     } catch (error) {
@@ -243,7 +237,7 @@ const HomeScreen = ({ navigation }) => {
       if (!pickerResult.canceled && pickerResult.assets?.length > 0) {
         const imageUri = pickerResult.assets[0].uri;
         setImage(imageUri);
-        setResults([]);
+        setResults(null);
         setSelectedTexture(null);
         setShowRecommendationPrompt(false);
         await uploadImageToAPI(imageUri);
@@ -265,7 +259,7 @@ const HomeScreen = ({ navigation }) => {
       if (!pickerResult.canceled && pickerResult.assets?.length > 0) {
         const imageUri = pickerResult.assets[0].uri;
         setImage(imageUri);
-        setResults([]);
+        setResults(null);
         setSelectedTexture(null);
         setShowRecommendationPrompt(false);
         await uploadImageToAPI(imageUri);
@@ -282,6 +276,43 @@ const HomeScreen = ({ navigation }) => {
         soilTexture: selectedTexture.name 
       });
     }
+  };
+
+  // Render the confidence bars for other soil types
+  const renderOtherSoilTypes = () => {
+    if (!results?.all_confidences) return null;
+
+    return (
+      <View style={styles.otherResultsContainer}>
+        <Text style={styles.otherResultsTitle}>Other Possible Soil Types</Text>
+        {Object.entries(results.all_confidences)
+          .filter(([name]) => name !== results.name) // Exclude the primary result
+          .sort((a, b) => b[1].score - a[1].score) // Sort by confidence
+          .map(([name, data], index) => (
+            <View key={index} style={styles.otherResultItem}>
+              <View style={styles.otherResultHeader}>
+                <View style={[styles.otherColorSwatch, { backgroundColor: data.color }]} />
+                <Text style={styles.otherTextureName}>{name}</Text>
+                <Text style={styles.otherConfidenceValue}>
+                  {Math.round(data.score * 100)}%
+                </Text>
+              </View>
+              <View style={styles.otherProgressContainer}>
+                <View style={styles.otherProgressBackground} />
+                <View
+                  style={[
+                    styles.otherProgressFill,
+                    { 
+                      width: `${data.score * 100}%`, 
+                      backgroundColor: data.color,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          ))}
+      </View>
+    );
   };
 
   return (
@@ -424,6 +455,9 @@ const HomeScreen = ({ navigation }) => {
               <Icon name="arrow-right" size={14} color="white" />
             </TouchableOpacity>
           </Animated.View>
+
+          {/* Other possible soil types */}
+          {renderOtherSoilTypes()}
         </Animated.View>
       )}
 
@@ -684,6 +718,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 16,
     elevation: 5,
+    marginBottom: 16,
   },
   textureHeader: {
     flexDirection: 'row',
@@ -768,6 +803,67 @@ const styles = StyleSheet.create({
     marginRight: 8,
     color: 'white',
   },
+  // Other soil types styles
+  otherResultsContainer: {
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: '#1A3C40',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 5,
+  },
+  otherResultsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1A3C40',
+    marginBottom: 12,
+  },
+  otherResultItem: {
+    marginBottom: 12,
+  },
+  otherResultHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  otherColorSwatch: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    marginRight: 12,
+  },
+  otherTextureName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1A3C40',
+  },
+  otherConfidenceValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6C757D',
+  },
+  otherProgressContainer: {
+    height: 6,
+    backgroundColor: '#E9ECEF',
+    borderRadius: 3,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  otherProgressBackground: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#E9ECEF',
+    borderRadius: 3,
+  },
+  otherProgressFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  // FAQ styles
   faqContainer: {
     paddingHorizontal: 16,
   },
@@ -804,6 +900,7 @@ const styles = StyleSheet.create({
     marginTop: -8,
     marginBottom: 12,
   },
+  // Modal styles
   promptContainer: {
     flex: 1,
     justifyContent: 'center',
