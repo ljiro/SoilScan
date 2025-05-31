@@ -11,7 +11,8 @@ import {
   Platform,
   Modal,
   Animated,
-  Easing
+  Easing,
+  LayoutAnimation
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImagePicker from 'expo-image-picker';
@@ -36,6 +37,7 @@ const HomeScreen = ({ navigation }) => {
   const rotateAnim = useState(new Animated.Value(0))[0];
   const shakeAnim = useState(new Animated.Value(0))[0];
 
+
   // FAQ data
   const faqs = [
     {
@@ -55,6 +57,13 @@ const HomeScreen = ({ navigation }) => {
       answer: "Our AI model has an accuracy of about 85-90% for common soil types. For best results, ensure your photo is clear and representative of your soil."
     }
   ];
+  
+  // Configure LayoutAnimation
+  LayoutAnimation.configureNext(LayoutAnimation.create(
+    300,
+    LayoutAnimation.Types.easeInEaseOut,
+    LayoutAnimation.Properties.opacity
+  ));
 
   useEffect(() => {
     // Entry animations
@@ -92,21 +101,7 @@ const HomeScreen = ({ navigation }) => {
   }, []);
 
   const toggleFaq = (index) => {
-    if (expandedFaqIndex === index) {
-      Animated.timing(rotateAnim, {
-        toValue: 0,
-        duration: 300,
-        easing: Easing.ease,
-        useNativeDriver: true
-      }).start();
-    } else {
-      Animated.timing(rotateAnim, {
-        toValue: 1,
-        duration: 300,
-        easing: Easing.ease,
-        useNativeDriver: true
-      }).start();
-    }
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setExpandedFaqIndex(expandedFaqIndex === index ? null : index);
   };
 
@@ -158,17 +153,30 @@ const HomeScreen = ({ navigation }) => {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Request failed');
+        throw new Error(`Server responded with status ${response.status}`);
       }
 
       const data = await response.json();
       
-      // Use mock data if API response is invalid
-      const responseData = data.predictions;
+      // Validate API response structure
+      if (!data || !data.predictions || !Array.isArray(data.predictions)) {
+        console.log('Invalid API response structure:', data);
+        throw new Error('Received unexpected data format from server');
+      }
 
-      if (!Array.isArray(responseData) || responseData.length === 0) {
-        throw new Error('No valid soil data received');
+      // Validate each prediction item
+      const validPredictions = data.predictions.filter(prediction => 
+        prediction && 
+        prediction.name && 
+        typeof prediction.confidence === 'number' &&
+        prediction.color &&
+        prediction.description &&
+        Array.isArray(prediction.properties)
+      );
+
+      if (validPredictions.length === 0) {
+        console.log('No valid predictions found in:', data.predictions);
+        throw new Error('No valid soil predictions received');
       }
 
       // Success animation
@@ -191,11 +199,23 @@ const HomeScreen = ({ navigation }) => {
         }).start();
       });
 
-      setResults(responseData);
-      setSelectedTexture(responseData[0]);
+      setResults(validPredictions);
+      setSelectedTexture(validPredictions[0]);
       setShowRecommendationPrompt(true);
       
     } catch (error) {
+      console.error('Upload error:', error);
+      
+      // Show more specific error messages
+      let errorMessage = 'Failed to analyze soil. Please try again.';
+      if (error.message.includes('Network request failed')) {
+        errorMessage = 'Network error. Please check your internet connection.';
+      } else if (error.message.includes('Unexpected data format')) {
+        errorMessage = 'Server returned unexpected data. Please try again.';
+      }
+      
+      Alert.alert('Error', errorMessage);
+      
       // Error shake animation
       Animated.sequence([
         Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
@@ -204,8 +224,6 @@ const HomeScreen = ({ navigation }) => {
         Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true })
       ]).start();
       
-      console.error('Upload error:', error);
-      Alert.alert('Error', error.message || 'Failed to analyze soil. Please try again.');
     } finally {
       setShowLoadingModal(false);
       setIsAnalyzing(false);
@@ -415,18 +433,7 @@ const HomeScreen = ({ navigation }) => {
         <Text style={styles.sectionSubtitle}>Frequently asked questions</Text>
         
         {faqs.map((faq, index) => (
-          <Animated.View 
-            key={index}
-            style={{
-              opacity: fadeAnim,
-              transform: [{
-                translateY: fadeAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [50 * (index + 1), 0]
-                })
-              }]
-            }}
-          >
+          <View key={index}>
             <TouchableOpacity 
               style={styles.faqCard}
               onPress={() => toggleFaq(index)}
@@ -434,33 +441,27 @@ const HomeScreen = ({ navigation }) => {
             >
               <View style={styles.faqHeader}>
                 <Text style={styles.faqQuestionText}>{faq.question}</Text>
-                <Animated.View style={{ transform: [{ rotate: rotateInterpolate }] }}>
-                  <Icon 
-                    name="plus" 
-                    size={16} 
-                    color="#5D9C59" 
-                  />
-                </Animated.View>
+                <Icon 
+                  name={expandedFaqIndex === index ? "minus" : "plus"} 
+                  size={16} 
+                  color="#5D9C59" 
+                />
               </View>
-              
-              {expandedFaqIndex === index && (
-                <Animated.Text 
-                  style={[
-                    styles.faqAnswerText,
-                    {
-                      opacity: fadeAnim,
-                      height: fadeAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0, 'auto']
-                      })
-                    }
-                  ]}
-                >
-                  {faq.answer}
-                </Animated.Text>
-              )}
             </TouchableOpacity>
-          </Animated.View>
+            
+            <View 
+              style={{
+                maxHeight: expandedFaqIndex === index ? 1000 : 0,
+                overflow: 'hidden',
+                opacity: expandedFaqIndex === index ? 1 : 0,
+                transform: [{
+                  translateY: expandedFaqIndex === index ? 0 : -10
+                }]
+              }}
+            >
+              <Text style={styles.faqAnswerText}>{faq.answer}</Text>
+            </View>
+          </View>
         ))}
       </Animated.View>
 
@@ -774,7 +775,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     borderRadius: 16,
     padding: 16,
-    marginBottom: 12,
+    marginBottom: 8,
     shadowColor: '#1A3C40',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.05,
@@ -795,8 +796,13 @@ const styles = StyleSheet.create({
   faqAnswerText: {
     color: '#6C757D',
     lineHeight: 22,
-    marginTop: 12,
+    padding: 16,
+    paddingTop: 8,
     fontSize: 14,
+    backgroundColor: 'white',
+    borderRadius: 12,
+    marginTop: -8,
+    marginBottom: 12,
   },
   promptContainer: {
     flex: 1,
