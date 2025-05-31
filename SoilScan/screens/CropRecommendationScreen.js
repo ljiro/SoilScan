@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -7,18 +7,28 @@ import {
   TouchableOpacity, 
   TextInput, 
   ActivityIndicator,
-  Alert
+  Alert,
+  Animated,
+  Easing
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import LinearGradient from 'react-native-linear-gradient';
 
 const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict-crop';
 
 const CropRecommendationScreen = ({ route }) => {
+  // Animation values
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideUpAnim = useRef(new Animated.Value(30)).current;
+  const cardScale = useRef(new Animated.Value(0.95)).current;
+  const buttonScale = useRef(new Animated.Value(1)).current;
+
   // Get soil texture from navigation params
   const { soilTexture } = route.params || {};
-
+  
+  const [selectedTexture, setSelectedTexture] = useState(null);
   const [soilParams, setSoilParams] = useState({
-    texture: soilTexture || '',
+    texture: '',
     N: '',
     P: '',
     K: '',
@@ -32,14 +42,34 @@ const CropRecommendationScreen = ({ route }) => {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [soilTextures, setSoilTextures] = useState([
+  const soilTextures = [
     'Sandy', 'Clay', 'Silt', 'Loam', 'Peaty', 
     'Chalky', 'Sandy Loam', 'Clay Loam', 'Silty Loam'
-  ]);
+  ];
 
   useEffect(() => {
-    // If soil texture was passed, update the form field
+    // Entry animations
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true
+      }),
+      Animated.spring(slideUpAnim, {
+        toValue: 0,
+        friction: 8,
+        useNativeDriver: true
+      }),
+      Animated.spring(cardScale, {
+        toValue: 1,
+        friction: 5,
+        useNativeDriver: true
+      })
+    ]).start();
+
+    // Handle incoming soil texture
     if (soilTexture) {
+      setSelectedTexture(soilTexture);
       setSoilParams(prev => ({
         ...prev,
         texture: soilTexture
@@ -47,38 +77,34 @@ const CropRecommendationScreen = ({ route }) => {
     }
   }, [soilTexture]);
 
+  const handleTextureSelect = (texture) => {
+    setSelectedTexture(texture);
+    setSoilParams(prev => ({
+      ...prev,
+      texture: texture
+    }));
+    
+    // Animation feedback
+    Animated.sequence([
+      Animated.timing(buttonScale, {
+        toValue: 0.95,
+        duration: 100,
+        useNativeDriver: true
+      }),
+      Animated.timing(buttonScale, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true
+      })
+    ]).start();
+  };
+
   const handleInputChange = (name, value) => {
+    if (name === 'texture') setSelectedTexture(null);
     setSoilParams(prev => ({
       ...prev,
       [name]: value
     }));
-  };
-
-  const validateInputs = () => {
-    const requiredFields = ['texture', 'N', 'P', 'K', 'ph', 'temperature', 'humidity', 'rainfall'];
-    const emptyFields = requiredFields.filter(field => !soilParams[field]);
-    
-    if (emptyFields.length > 0) {
-      setError(`Please fill all fields: ${emptyFields.join(', ')}`);
-      return false;
-    }
-
-    // Validate numeric fields
-    const numericFields = ['N', 'P', 'K', 'ph', 'temperature', 'humidity', 'rainfall'];
-    for (const field of numericFields) {
-      if (isNaN(parseFloat(soilParams[field]))) {
-        setError(`Please enter a valid number for ${field}`);
-        return false;
-      }
-    }
-
-    // Validate pH range
-    if (parseFloat(soilParams.ph) < 0 || parseFloat(soilParams.ph) > 14) {
-      setError('pH must be between 0 and 14');
-      return false;
-    }
-
-    return true;
   };
 
   const getRecommendations = async () => {
@@ -87,216 +113,208 @@ const CropRecommendationScreen = ({ route }) => {
     setIsLoading(true);
     setError(null);
     
-    try {
-      const inputData = {
-        texture: soilParams.texture,
-        N: parseFloat(soilParams.N),
-        P: parseFloat(soilParams.P),
-        K: parseFloat(soilParams.K),
-        temperature: parseFloat(soilParams.temperature),
-        humidity: parseFloat(soilParams.humidity),
-        ph: parseFloat(soilParams.ph),
-        rainfall: parseFloat(soilParams.rainfall)
-      };
+    // Loading animation
+    Animated.loop(
+      Animated.timing(cardScale, {
+        toValue: 1.02,
+        duration: 500,
+        easing: Easing.linear,
+        useNativeDriver: true
+      })
+    ).start();
 
+    try {
       const response = await fetch(API_ENDPOINT, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(inputData),
+        body: JSON.stringify({
+          texture: soilParams.texture,
+          N: parseFloat(soilParams.N),
+          P: parseFloat(soilParams.P),
+          K: parseFloat(soilParams.K),
+          temperature: parseFloat(soilParams.temperature),
+          humidity: parseFloat(soilParams.humidity),
+          ph: parseFloat(soilParams.ph),
+          rainfall: parseFloat(soilParams.rainfall)
+        }),
       });
-
-      if (!response.ok) {
-        throw new Error(`Server responded with status ${response.status}`);
-      }
 
       const data = await response.json();
-      
-      if (!data.predictions || !Array.isArray(data.predictions)) {
-        throw new Error('Invalid response format from server');
-      }
-
-      // Process recommendations with detailed information
-      const processedRecommendations = data.predictions.map((prediction, index) => {
-        // Calculate suitability based on confidence score
-        const score = prediction.score || prediction.confidence || 0;
-        let suitability;
-        let suitabilityColor;
-        
-        if (score > 0.8) {
-          suitability = 'Highly Suitable';
-          suitabilityColor = '#4CAF50'; // Green
-        } else if (score > 0.6) {
-          suitability = 'Moderately Suitable';
-          suitabilityColor = '#8BC34A'; // Light Green
-        } else if (score > 0.4) {
-          suitability = 'Suitable';
-          suitabilityColor = '#FFC107'; // Amber
-        } else {
-          suitability = 'Marginally Suitable';
-          suitabilityColor = '#FF9800'; // Orange
-        }
-
-        return {
-          name: prediction.crop_name || `Crop ${index + 1}`,
-          suitability,
-          suitabilityColor,
-          score: parseFloat(score.toFixed(2)),
-          probability: `${(score * 100).toFixed(1)}%`,
-          description: prediction.description || 'No additional information available.',
-          benefits: prediction.benefits || ['Good yield potential'],
-          challenges: prediction.challenges || ['May require specific conditions'],
-          icon: getCropIcon(prediction.crop_name)
-        };
-      });
-
-      // Sort by score (descending)
-      processedRecommendations.sort((a, b) => b.score - a.score);
-      
-      setRecommendations(processedRecommendations);
+      setRecommendations(data.predictions || []);
       setIsSubmitted(true);
 
+      // Success animation
+      Animated.parallel([
+        Animated.spring(cardScale, {
+          toValue: 1.05,
+          friction: 3,
+          useNativeDriver: true
+        }),
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true
+        })
+      ]).start(() => {
+        Animated.spring(cardScale, {
+          toValue: 1,
+          friction: 5,
+          useNativeDriver: true
+        }).start();
+      });
+
     } catch (err) {
-      console.error('Recommendation Error:', err);
+      console.error('Error:', err);
       setError(err.message || 'Failed to get recommendations');
+      
+      // Error shake animation
+      Animated.sequence([
+        Animated.timing(slideUpAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+        Animated.timing(slideUpAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
+        Animated.timing(slideUpAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+        Animated.timing(slideUpAnim, { toValue: 0, duration: 50, useNativeDriver: true })
+      ]).start();
     } finally {
       setIsLoading(false);
     }
   };
 
-  const getCropIcon = (cropName) => {
-    if (!cropName) return 'pagelines';
-    
-    const cropIcons = {
-      'corn': 'corn',
-      'wheat': 'wheat',
-      'rice': 'rice',
-      'soybean': 'soybean',
-      'barley': 'barley',
-      'potato': 'potato',
-      'tomato': 'tomato',
-      'cotton': 'cotton',
-      'vegetable': 'carrot',
-      'fruit': 'apple',
-      'legume': 'seedling',
-      'grape': 'grapes',
-      'coffee': 'coffee',
-      'tea': 'leaf',
-    };
-
-    const lowerName = cropName.toLowerCase();
-    for (const [key, icon] of Object.entries(cropIcons)) {
-      if (lowerName.includes(key)) {
-        return icon;
-      }
-    }
-
-    return 'pagelines'; // default icon
-  };
-
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Icon name="pagelines" size={20} color="#5D9C59" style={styles.sectionIcon} />
-          <Text style={styles.sectionTitle}>Crop Recommendation</Text>
-        </View>
-        
-        <Text style={styles.sectionDescription}>
-          Enter your soil and weather parameters to get personalized crop recommendations.
-          {soilTexture && ` Detected soil texture: ${soilTexture}`}
-        </Text>
-
-        {error && (
-          <View style={styles.errorContainer}>
-            <Icon name="exclamation-circle" size={16} color="#D32F2F" />
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        )}
-
-        {/* Soil Parameters Section */}
-        <View style={styles.subSection}>
-          <Text style={styles.subSectionTitle}>Soil Parameters</Text>
-          
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Soil Texture</Text>
-            <View style={styles.textureContainer}>
-              {soilTextures.map((texture) => (
-                <TouchableOpacity
-                  key={texture}
-                  style={[
-                    styles.texturePill,
-                    soilParams.texture === texture && styles.selectedTexturePill
-                  ]}
-                  onPress={() => handleInputChange('texture', texture)}
-                >
-                  <Text style={[
-                    styles.texturePillText,
-                    soilParams.texture === texture && styles.selectedTexturePillText
-                  ]}>
-                    {texture}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+    <LinearGradient 
+      colors={['#f5f7fa', '#e4efe9']} 
+      style={styles.container}
+    >
+      <Animated.ScrollView
+        style={{ opacity: fadeAnim, transform: [{ translateY: slideUpAnim }] }}
+        contentContainerStyle={styles.contentContainer}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Crop Recommendations</Text>
+          {soilTexture && (
+            <View style={styles.detectedTag}>
+              <Text style={styles.detectedText}>Detected: {soilTexture}</Text>
             </View>
+          )}
+        </View>
+
+        {/* Main Form Card */}
+        <Animated.View 
+          style={[
+            styles.formCard,
+            { 
+              transform: [{ scale: cardScale }],
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: 0.1,
+              shadowRadius: 20,
+              elevation: 10
+            }
+          ]}
+        >
+          {/* Soil Texture Selection */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Soil Texture</Text>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.textureContainer}
+            >
+              {soilTextures.map((texture) => (
+                <Animated.View 
+                  key={texture}
+                  style={{ transform: [{ scale: selectedTexture === texture ? 1.05 : 1 }] }}
+                >
+                  <TouchableOpacity
+                    style={[
+                      styles.texturePill,
+                      selectedTexture === texture && styles.selectedTexturePill
+                    ]}
+                    onPress={() => handleTextureSelect(texture)}
+                  >
+                    <Text style={[
+                      styles.texturePillText,
+                      selectedTexture === texture && styles.selectedTexturePillText
+                    ]}>
+                      {texture}
+                    </Text>
+                  </TouchableOpacity>
+                </Animated.View>
+              ))}
+            </ScrollView>
+            
             <TextInput
               style={styles.input}
-              value={soilParams.texture}
+              value={selectedTexture ? '' : soilParams.texture}
               onChangeText={(text) => handleInputChange('texture', text)}
               placeholder="Or enter custom texture"
+              placeholderTextColor="#999"
             />
           </View>
 
-          <View style={styles.inputRow}>
-            <View style={[styles.inputGroup, styles.inputGroupSmall]}>
-              <Text style={styles.inputLabel}>Nitrogen (N) ppm</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="numeric"
-                value={soilParams.N}
-                onChangeText={(text) => handleInputChange('N', text)}
-                placeholder="0-200"
-              />
-            </View>
-
-            <View style={[styles.inputGroup, styles.inputGroupSmall]}>
-              <Text style={styles.inputLabel}>Phosphorus (P) ppm</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="numeric"
-                value={soilParams.P}
-                onChangeText={(text) => handleInputChange('P', text)}
-                placeholder="0-100"
-              />
-            </View>
-
-            <View style={[styles.inputGroup, styles.inputGroupSmall]}>
-              <Text style={styles.inputLabel}>Potassium (K) ppm</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="numeric"
-                value={soilParams.K}
-                onChangeText={(text) => handleInputChange('K', text)}
-                placeholder="0-500"
-              />
+          {/* Nutrient Inputs */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Soil Nutrients</Text>
+            <View style={styles.inputRow}>
+              {[
+                { label: 'Nitrogen (N)', key: 'N', placeholder: 'ppm' },
+                { label: 'Phosphorus (P)', key: 'P', placeholder: 'ppm' },
+                { label: 'Potassium (K)', key: 'K', placeholder: 'ppm' }
+              ].map((item) => (
+                <View key={item.key} style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>{item.label}</Text>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={soilParams[item.key]}
+                    onChangeText={(text) => handleInputChange(item.key, text)}
+                    placeholder={item.placeholder}
+                  />
+                </View>
+              ))}
             </View>
           </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Soil pH (0-14)</Text>
+          {/* Environment Inputs */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Environment</Text>
+            <View style={styles.inputRow}>
+              {[
+                { label: 'Temperature', key: 'temperature', placeholder: '°C' },
+                { label: 'Humidity', key: 'humidity', placeholder: '%' },
+                { label: 'Rainfall', key: 'rainfall', placeholder: 'mm' }
+              ].map((item) => (
+                <View key={item.key} style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>{item.label}</Text>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={soilParams[item.key]}
+                    onChangeText={(text) => handleInputChange(item.key, text)}
+                    placeholder={item.placeholder}
+                  />
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {/* pH Scale */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Soil pH Level</Text>
             <View style={styles.phContainer}>
               <Text style={styles.phLabel}>Acidic</Text>
               <View style={styles.phScale}>
-                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map(num => (
+                {Array.from({ length: 15 }).map((_, i) => (
                   <View 
-                    key={num} 
+                    key={i}
                     style={[
                       styles.phSegment,
-                      num < 7 && styles.phAcidic,
-                      num === 7 && styles.phNeutral,
-                      num > 7 && styles.phAlkaline,
-                      parseFloat(soilParams.ph) === num && styles.phSelected
+                      i < 7 && styles.phAcidic,
+                      i === 7 && styles.phNeutral,
+                      i > 7 && styles.phAlkaline,
+                      parseFloat(soilParams.ph) === i && styles.phSelected
                     ]}
                   />
                 ))}
@@ -311,369 +329,280 @@ const CropRecommendationScreen = ({ route }) => {
               placeholder="Enter pH (0-14)"
             />
           </View>
-        </View>
 
-        {/* Weather Parameters Section */}
-        <View style={styles.subSection}>
-          <Text style={styles.subSectionTitle}>Weather Parameters</Text>
-          
-          <View style={styles.inputRow}>
-            <View style={[styles.inputGroup, styles.inputGroupSmall]}>
-              <Text style={styles.inputLabel}>Temp (°C)</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="numeric"
-                value={soilParams.temperature}
-                onChangeText={(text) => handleInputChange('temperature', text)}
-                placeholder="e.g. 25"
-              />
-            </View>
+          {/* Submit Button */}
+          <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+            <TouchableOpacity 
+              style={styles.submitButton}
+              onPress={getRecommendations}
+              disabled={isLoading}
+            >
+              <LinearGradient
+                colors={['#5D9C59', '#4A8C4A']}
+                style={styles.gradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              >
+                {isLoading ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <>
+                    <Icon name="search" size={18} color="white" style={styles.buttonIcon} />
+                    <Text style={styles.submitButtonText}>Get Recommendations</Text>
+                  </>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+          </Animated.View>
+        </Animated.View>
 
-            <View style={[styles.inputGroup, styles.inputGroupSmall]}>
-              <Text style={styles.inputLabel}>Humidity (%)</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="numeric"
-                value={soilParams.humidity}
-                onChangeText={(text) => handleInputChange('humidity', text)}
-                placeholder="0-100"
-              />
-            </View>
-
-            <View style={[styles.inputGroup, styles.inputGroupSmall]}>
-              <Text style={styles.inputLabel}>Rainfall (mm)</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="numeric"
-                value={soilParams.rainfall}
-                onChangeText={(text) => handleInputChange('rainfall', text)}
-                placeholder="Annual"
-              />
-            </View>
-          </View>
-        </View>
-
-        <TouchableOpacity 
-          style={styles.submitButton}
-          onPress={getRecommendations}
-          disabled={isLoading}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="white" />
-          ) : (
-            <>
-              <Icon name="search" size={18} color="white" style={styles.buttonIcon} />
-              <Text style={styles.submitButtonText}>Get Recommendations</Text>
-            </>
-          )}
-        </TouchableOpacity>
-
+        {/* Results Section */}
         {isSubmitted && (
-          <View style={styles.resultsSection}>
-            <View style={styles.sectionHeader}>
-              <Icon name="lightbulb-o" size={20} color="#5D9C59" style={styles.sectionIcon} />
-              <Text style={styles.sectionTitle}>Recommended Crops</Text>
-            </View>
-
-            {recommendations.length === 0 ? (
-              <View style={styles.noResults}>
-                <Icon name="exclamation-triangle" size={24} color="#FFC107" />
-                <Text style={styles.noResultsText}>No suitable crops found for these conditions</Text>
-              </View>
-            ) : (
-              recommendations.map((crop, index) => (
-                <View key={index} style={styles.cropCard}>
-                  <View style={styles.cropHeader}>
-                    <View style={styles.cropIconContainer}>
-                      <Icon name={crop.icon} size={24} color={crop.suitabilityColor} />
-                    </View>
-                    <View style={styles.cropTitleContainer}>
-                      <Text style={styles.cropName}>{crop.name}</Text>
-                      <Text style={styles.cropProbability}>{crop.probability} match</Text>
-                    </View>
+          <Animated.View 
+            style={[
+              styles.resultsContainer,
+              { opacity: fadeAnim }
+            ]}
+          >
+            <Text style={styles.resultsTitle}>Recommended Crops</Text>
+            
+            {recommendations.map((crop, index) => (
+              <Animated.View 
+                key={index}
+                style={styles.cropCard}
+                entering={Animated.spring(
+                  new Animated.Value(0),
+                  {
+                    toValue: 1,
+                    friction: 5,
+                    useNativeDriver: true
+                  }
+                )}
+              >
+                <View style={styles.cropHeader}>
+                  <View style={styles.cropIcon}>
+                    <Icon name="pagelines" size={24} color="#5D9C59" />
                   </View>
-                  
-                  <View style={[
-                    styles.suitabilityBadge,
-                    { backgroundColor: `${crop.suitabilityColor}20`, borderColor: crop.suitabilityColor }
-                  ]}>
-                    <Text style={[styles.suitabilityText, { color: crop.suitabilityColor }]}>
-                      {crop.suitability}
+                  <Text style={styles.cropName}>{crop.crop_name}</Text>
+                  <View style={styles.confidenceBadge}>
+                    <Text style={styles.confidenceText}>
+                      {Math.round(crop.confidence * 100)}%
                     </Text>
                   </View>
-
-                  <Text style={styles.cropDescription}>{crop.description}</Text>
-                  
-                  <View style={styles.cropDetails}>
-                    <View style={styles.detailColumn}>
-                      <Text style={styles.detailTitle}>Benefits</Text>
-                      {crop.benefits.map((benefit, i) => (
-                        <View key={`benefit-${i}`} style={styles.detailItem}>
-                          <Icon name="check-circle" size={14} color="#4CAF50" />
-                          <Text style={styles.detailText}>{benefit}</Text>
-                        </View>
-                      ))}
-                    </View>
-                    
-                    <View style={styles.detailColumn}>
-                      <Text style={styles.detailTitle}>Challenges</Text>
-                      {crop.challenges.map((challenge, i) => (
-                        <View key={`challenge-${i}`} style={styles.detailItem}>
-                          <Icon name="exclamation-circle" size={14} color="#F44336" />
-                          <Text style={styles.detailText}>{challenge}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
                 </View>
-              ))
-            )}
-          </View>
+                <Text style={styles.cropDescription}>
+                  Best grown in {crop.optimal_conditions}
+                </Text>
+              </Animated.View>
+            ))}
+          </Animated.View>
         )}
-      </View>
-    </ScrollView>
+      </Animated.ScrollView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
-    padding: 16,
   },
-  section: {
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+  contentContainer: {
+    padding: 20,
+    paddingBottom: 40
   },
-  subSection: {
+  header: {
     marginBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-    paddingBottom: 10,
-  },
-  subSectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1A3C40',
-    marginBottom: 12,
-  },
-  sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'space-between'
+  },
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#1A3C40',
+  },
+  detectedTag: {
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  detectedText: {
+    color: '#5D9C59',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  formCard: {
+    backgroundColor: 'white',
+    borderRadius: 25,
+    padding: 25,
+    marginBottom: 20,
+  },
+  section: {
+    marginBottom: 20,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#1A3C40',
+    marginBottom: 15,
   },
-  sectionDescription: {
-    color: '#666',
-    marginBottom: 16,
-    lineHeight: 20,
+  textureContainer: {
+    flexDirection: 'row',
+    paddingBottom: 10,
   },
-  sectionIcon: {
-    marginRight: 8,
+  texturePill: {
+    paddingVertical: 8,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    marginRight: 10,
+    backgroundColor: 'white',
   },
-  inputGroup: {
-    marginBottom: 16,
+  selectedTexturePill: {
+    backgroundColor: '#5D9C59',
+    borderColor: '#5D9C59',
   },
-  inputGroupSmall: {
-    flex: 1,
-    marginRight: 8,
+  texturePillText: {
+    color: '#757575',
+    fontWeight: '500',
+  },
+  selectedTexturePillText: {
+    color: 'white',
   },
   inputRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
+  inputGroup: {
+    flex: 1,
+    marginRight: 10,
+  },
   inputLabel: {
-    color: '#1A3C40',
+    color: '#616161',
     marginBottom: 8,
+    fontSize: 14,
     fontWeight: '500',
   },
   input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
+    backgroundColor: '#FAFAFA',
+    borderRadius: 12,
+    padding: 15,
     fontSize: 16,
-  },
-  textureContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 8,
-  },
-  texturePill: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#5D9C59',
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  selectedTexturePill: {
-    backgroundColor: '#5D9C59',
-  },
-  texturePillText: {
-    color: '#5D9C59',
-    fontSize: 12,
-  },
-  selectedTexturePillText: {
-    color: 'white',
+    borderColor: '#EEEEEE',
   },
   phContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 15,
   },
   phScale: {
     flex: 1,
-    flexDirection: 'row',
     height: 20,
-    marginHorizontal: 8,
+    flexDirection: 'row',
+    marginHorizontal: 10,
+    borderRadius: 10,
+    overflow: 'hidden',
   },
   phSegment: {
     flex: 1,
     height: '100%',
-    marginHorizontal: 1,
   },
   phAcidic: {
-    backgroundColor: '#FF5722',
+    backgroundColor: '#FF7043',
   },
   phNeutral: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: '#66BB6A',
   },
   phAlkaline: {
-    backgroundColor: '#2196F3',
+    backgroundColor: '#42A5F5',
   },
   phSelected: {
-    borderWidth: 2,
-    borderColor: '#000',
+    borderTopWidth: 3,
+    borderBottomWidth: 3,
+    borderColor: '#1A3C40',
   },
   phLabel: {
     fontSize: 12,
-    color: '#666',
+    color: '#757575',
   },
   submitButton: {
-    backgroundColor: '#5D9C59',
-    borderRadius: 8,
-    padding: 16,
+    borderRadius: 15,
+    overflow: 'hidden',
+    marginTop: 10,
+  },
+  gradient: {
+    padding: 18,
     alignItems: 'center',
-    marginTop: 16,
-    flexDirection: 'row',
     justifyContent: 'center',
+    flexDirection: 'row',
   },
   submitButtonText: {
     color: 'white',
     fontWeight: '600',
     fontSize: 16,
+    marginLeft: 10,
   },
   buttonIcon: {
     marginRight: 8,
   },
-  resultsSection: {
-    marginTop: 24,
+  resultsContainer: {
+    backgroundColor: 'white',
+    borderRadius: 25,
+    padding: 25,
   },
-  noResults: {
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#FFF9E6',
-    borderRadius: 8,
-  },
-  noResultsText: {
-    marginTop: 8,
+  resultsTitle: {
+    fontSize: 22,
+    fontWeight: '700',
     color: '#1A3C40',
-    textAlign: 'center',
+    marginBottom: 20,
   },
   cropCard: {
-    backgroundColor: '#f9f9f9',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
+    backgroundColor: '#FAFAFA',
+    borderRadius: 18,
+    padding: 20,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 3,
   },
   cropHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  cropIconContainer: {
+  cropIcon: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#EDF7ED',
+    backgroundColor: '#E8F5E9',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
-  cropTitleContainer: {
-    flex: 1,
-  },
   cropName: {
+    flex: 1,
     fontSize: 18,
     fontWeight: '600',
     color: '#1A3C40',
   },
-  cropProbability: {
-    fontSize: 14,
-    color: '#666',
-  },
-  suitabilityBadge: {
-    alignSelf: 'flex-start',
-    paddingVertical: 4,
+  confidenceBadge: {
+    backgroundColor: '#E8F5E9',
     paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 20,
-    marginBottom: 12,
-    borderWidth: 1,
   },
-  suitabilityText: {
-    fontWeight: '500',
-    fontSize: 12,
+  confidenceText: {
+    color: '#5D9C59',
+    fontWeight: '700',
   },
   cropDescription: {
-    color: '#666',
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  cropDetails: {
-    flexDirection: 'row',
-    marginTop: 8,
-  },
-  detailColumn: {
-    flex: 1,
-  },
-  detailTitle: {
-    fontWeight: '600',
-    color: '#1A3C40',
-    marginBottom: 4,
-  },
-  detailItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  detailText: {
-    marginLeft: 6,
-    fontSize: 12,
-    color: '#666',
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFEBEE',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  errorText: {
-    color: '#D32F2F',
-    marginLeft: 8,
+    color: '#616161',
+    lineHeight: 22,
   },
 });
 
