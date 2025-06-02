@@ -8,7 +8,6 @@ import {
   TextInput,
   ActivityIndicator,
   Animated,
-  Easing,
   FlatList,
   Dimensions
 } from 'react-native';
@@ -17,7 +16,6 @@ import LinearGradient from 'react-native-linear-gradient';
 
 const { width } = Dimensions.get('window');
 
-// Soil texture categories
 const SOIL_TEXTURES = [
   'Alluvial', 'Black', 'Cinder', 'Clay', 'Laterite',
   'Loamy', 'Peat', 'Red', 'Sandy', 'Yellow'
@@ -29,10 +27,8 @@ const CropRecommendationScreen = ({ route }) => {
   const slideUpAnim = useRef(new Animated.Value(30)).current;
   const buttonScale = useRef(new Animated.Value(1)).current;
 
-  // Get soil texture from navigation params
   const { soilTexture } = route.params || {};
   
-  // Form state
   const [formData, setFormData] = useState({
     soilTexture: '',
     nitrogen: '',
@@ -50,12 +46,10 @@ const CropRecommendationScreen = ({ route }) => {
   const [selectedTexture, setSelectedTexture] = useState(null);
 
   useEffect(() => {
-    // Entry animations
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
         duration: 800,
-        easing: Easing.out(Easing.ease),
         useNativeDriver: true
       }),
       Animated.spring(slideUpAnim, {
@@ -66,7 +60,6 @@ const CropRecommendationScreen = ({ route }) => {
       })
     ]).start();
 
-    // Set initial texture from navigation params
     if (soilTexture) {
       handleTextureSelect(soilTexture);
     }
@@ -76,7 +69,6 @@ const CropRecommendationScreen = ({ route }) => {
     setSelectedTexture(texture);
     setFormData(prev => ({ ...prev, soilTexture: texture }));
     
-    // Button press animation
     Animated.sequence([
       Animated.timing(buttonScale, {
         toValue: 0.95,
@@ -125,22 +117,17 @@ const CropRecommendationScreen = ({ route }) => {
       // Simulate API call
       await new Promise(resolve => setTimeout(resolve, 1500));
       
-      // Mock data - replace with actual API call
+      // Mock data
       const mockRecommendations = [
         {
           name: 'Wheat',
           confidence: 0.92,
-          description: 'Ideal for your soil conditions. Requires moderate water and grows well in temperatures between 10-25°C.'
+          description: 'Ideal for your soil conditions. Requires moderate water.'
         },
         {
           name: 'Barley',
           confidence: 0.85,
-          description: 'Suitable for your climate. Drought-resistant and grows well in slightly alkaline soils.'
-        },
-        {
-          name: 'Corn',
-          confidence: 0.78,
-          description: 'Good match for your nutrient levels. Requires warm temperatures and regular watering.'
+          description: 'Suitable for your climate. Drought-resistant.'
         }
       ];
       
@@ -154,47 +141,47 @@ const CropRecommendationScreen = ({ route }) => {
   };
 
   return (
-    <LinearGradient 
-      colors={['#f8f9fa', '#e9f5e9']} 
-      style={styles.container}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-    >
-      <Animated.ScrollView
-        style={{ opacity: fadeAnim, transform: [{ translateY: slideUpAnim }] }}
-        contentContainerStyle={styles.contentContainer}
-        showsVerticalScrollIndicator={false}
+    <View style={styles.container}>
+      <LinearGradient 
+        colors={['#f8f9fa', '#e9f5e9']}
+        style={styles.gradientBackground}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.headerTitle}>Crop Recommendations</Text>
-            <Text style={styles.headerSubtitle}>Get personalized crop suggestions</Text>
+        <Animated.ScrollView
+          style={{ opacity: fadeAnim, transform: [{ translateY: slideUpAnim }] }}
+          contentContainerStyle={styles.contentContainer}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.headerTitle}>Crop Recommendations</Text>
+              <Text style={styles.headerSubtitle}>Get personalized crop suggestions</Text>
+            </View>
+            {soilTexture && (
+              <View style={styles.detectedTag}>
+                <Icon name="leaf" size={14} color="#5D9C59" />
+                <Text style={styles.detectedText}>Detected: {soilTexture}</Text>
+              </View>
+            )}
           </View>
-          {soilTexture && (
-            <View style={styles.detectedTag}>
-              <Icon name="leaf" size={14} color="#5D9C59" />
-              <Text style={styles.detectedText}>Detected: {soilTexture}</Text>
-            </View>
-          )}
-        </View>
 
-        {/* Main Form */}
-        <View style={styles.formCard}>
-          {/* Soil Texture Selection */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Icon name="envira" size={18} color="#5D9C59" style={styles.sectionIcon} />
-              <Text style={styles.sectionTitle}>Soil Texture</Text>
-            </View>
-            <Text style={styles.sectionDescription}>Select the predominant soil texture in your area</Text>
-            
-            <FlatList
-              horizontal
-              data={SOIL_TEXTURES}
-              keyExtractor={item => item}
-              renderItem={({ item }) => (
-                <Animated.View style={{ transform: [{ scale: selectedTexture === item ? 1.05 : 1 }] }}>
+          {/* Main Form */}
+          <View style={styles.formCard}>
+            {/* Soil Texture Selection */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Icon name="envira" size={18} color="#5D9C59" style={styles.sectionIcon} />
+                <Text style={styles.sectionTitle}>Soil Texture</Text>
+              </View>
+              <Text style={styles.sectionDescription}>Select the predominant soil texture in your area</Text>
+              
+              <FlatList
+                horizontal
+                data={SOIL_TEXTURES}
+                keyExtractor={item => item}
+                renderItem={({ item }) => (
                   <TouchableOpacity
                     style={[
                       styles.texturePill,
@@ -209,231 +196,227 @@ const CropRecommendationScreen = ({ route }) => {
                       {item}
                     </Text>
                   </TouchableOpacity>
-                </Animated.View>
-              )}
-              contentContainerStyle={styles.textureContainer}
-              showsHorizontalScrollIndicator={false}
-            />
-          </View>
-
-          {/* NPK Values */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Icon name="flask" size={16} color="#5D9C59" style={styles.sectionIcon} />
-              <Text style={styles.sectionTitle}>Soil Nutrients (NPK)</Text>
-            </View>
-            <Text style={styles.sectionDescription}>Enter your soil nutrient levels in parts per million (ppm)</Text>
-            
-            <View style={styles.inputRow}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Nitrogen (N)</Text>
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={formData.nitrogen}
-                    onChangeText={(text) => handleInputChange('nitrogen', text)}
-                    placeholder="0.0"
-                  />
-                  <Text style={styles.inputUnit}>ppm</Text>
-                </View>
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Phosphorus (P)</Text>
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={formData.phosphorus}
-                    onChangeText={(text) => handleInputChange('phosphorus', text)}
-                    placeholder="0.0"
-                  />
-                  <Text style={styles.inputUnit}>ppm</Text>
-                </View>
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Potassium (K)</Text>
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={formData.potassium}
-                    onChangeText={(text) => handleInputChange('potassium', text)}
-                    placeholder="0.0"
-                  />
-                  <Text style={styles.inputUnit}>ppm</Text>
-                </View>
-              </View>
-            </View>
-          </View>
-
-          {/* Environmental Factors */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Icon name="cloud" size={18} color="#5D9C59" style={styles.sectionIcon} />
-              <Text style={styles.sectionTitle}>Environmental Factors</Text>
-            </View>
-            <Text style={styles.sectionDescription}>Enter your local climate conditions</Text>
-            
-            <View style={styles.inputRow}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Temperature (°C)</Text>
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={formData.temperature}
-                    onChangeText={(text) => handleInputChange('temperature', text)}
-                    placeholder="0.0"
-                  />
-                  <Text style={styles.inputUnit}>°C</Text>
-                </View>
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Humidity (%)</Text>
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={formData.humidity}
-                    onChangeText={(text) => handleInputChange('humidity', text)}
-                    placeholder="0.0"
-                  />
-                  <Text style={styles.inputUnit}>%</Text>
-                </View>
-              </View>
-            </View>
-            
-            <View style={styles.inputRow}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Rainfall (mm)</Text>
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={formData.rainfall}
-                    onChangeText={(text) => handleInputChange('rainfall', text)}
-                    placeholder="0.0"
-                  />
-                  <Text style={styles.inputUnit}>mm</Text>
-                </View>
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>pH Level</Text>
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={formData.ph}
-                    onChangeText={(text) => handleInputChange('ph', text)}
-                    placeholder="0-14"
-                  />
-                  <Text style={styles.inputUnit}>pH</Text>
-                </View>
-              </View>
-            </View>
-          </View>
-
-          {/* Submit Button */}
-          <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
-            <TouchableOpacity
-              style={styles.submitButton}
-              onPress={getRecommendations}
-              disabled={isLoading}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={['#5D9C59', '#7EB56A']}
-                style={styles.gradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                {isLoading ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <View style={styles.buttonContent}>
-                    <Icon name="search" size={18} color="white" />
-                    <Text style={styles.submitButtonText}>Get Recommendations</Text>
-                  </View>
                 )}
-              </LinearGradient>
-            </TouchableOpacity>
-          </Animated.View>
-        </View>
-
-        {/* Results Section */}
-        {recommendations.length > 0 && (
-          <View style={styles.resultsContainer}>
-            <View style={styles.resultsHeader}>
-              <Text style={styles.resultsTitle}>Recommended Crops</Text>
-              <View style={styles.resultsCount}>
-                <Text style={styles.resultsCountText}>{recommendations.length} results</Text>
-              </View>
+                contentContainerStyle={styles.textureContainer}
+                showsHorizontalScrollIndicator={false}
+              />
             </View>
-            
-            {recommendations.map((crop, index) => (
-              <View 
-                key={index} 
-                style={[
-                  styles.cropCard,
-                  index === 0 && styles.topCropCard
-                ]}
-              >
-                <View style={styles.cropHeader}>
-                  <View style={styles.cropIcon}>
-                    <Icon 
-                      name={index === 0 ? "trophy" : "pagelines"} 
-                      size={20} 
-                      color={index === 0 ? "#FFD700" : "#5D9C59"} 
+
+            {/* NPK Values */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Icon name="flask" size={16} color="#5D9C59" style={styles.sectionIcon} />
+                <Text style={styles.sectionTitle}>Soil Nutrients (NPK)</Text>
+              </View>
+              <Text style={styles.sectionDescription}>Enter your soil nutrient levels in parts per million (ppm)</Text>
+              
+              <View style={styles.inputRow}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Nitrogen (N)</Text>
+                  <View style={styles.inputContainer}>
+                    <TextInput
+                      style={styles.input}
+                      keyboardType="numeric"
+                      value={formData.nitrogen}
+                      onChangeText={(text) => handleInputChange('nitrogen', text)}
+                      placeholder="0.0"
                     />
-                  </View>
-                  <Text style={styles.cropName}>{crop.name}</Text>
-                  <View style={styles.confidenceBadge}>
-                    <Text style={styles.confidenceText}>
-                      {Math.round(crop.confidence * 100)}%
-                    </Text>
+                    <Text style={styles.inputUnit}>ppm</Text>
                   </View>
                 </View>
-                <Text style={styles.cropDescription}>
-                  {crop.description}
-                </Text>
-                <TouchableOpacity style={styles.detailsButton}>
-                  <Text style={styles.detailsButtonText}>View Details</Text>
-                  <Icon name="chevron-right" size={12} color="#5D9C59" />
-                </TouchableOpacity>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Phosphorus (P)</Text>
+                  <View style={styles.inputContainer}>
+                    <TextInput
+                      style={styles.input}
+                      keyboardType="numeric"
+                      value={formData.phosphorus}
+                      onChangeText={(text) => handleInputChange('phosphorus', text)}
+                      placeholder="0.0"
+                    />
+                    <Text style={styles.inputUnit}>ppm</Text>
+                  </View>
+                </View>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Potassium (K)</Text>
+                  <View style={styles.inputContainer}>
+                    <TextInput
+                      style={styles.input}
+                      keyboardType="numeric"
+                      value={formData.potassium}
+                      onChangeText={(text) => handleInputChange('potassium', text)}
+                      placeholder="0.0"
+                    />
+                    <Text style={styles.inputUnit}>ppm</Text>
+                  </View>
+                </View>
               </View>
-            ))}
-          </View>
-        )}
+            </View>
 
-        {/* Error Message */}
-        {error && (
-          <Animated.View 
-            style={styles.errorContainer}
-            entering={Animated.spring(new Animated.Value(0), {
-              toValue: 1,
-              friction: 5,
-              useNativeDriver: true
-            })}
-          >
-            <Icon name="exclamation-circle" size={18} color="#D32F2F" />
-            <Text style={styles.errorText}>{error}</Text>
-            <TouchableOpacity onPress={() => setError(null)}>
-              <Icon name="times" size={16} color="#D32F2F" />
-            </TouchableOpacity>
-          </Animated.View>
-        )}
-      </Animated.ScrollView>
-    </LinearGradient>
+            {/* Environmental Factors */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Icon name="cloud" size={18} color="#5D9C59" style={styles.sectionIcon} />
+                <Text style={styles.sectionTitle}>Environmental Factors</Text>
+              </View>
+              <Text style={styles.sectionDescription}>Enter your local climate conditions</Text>
+              
+              <View style={styles.inputRow}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Temperature (°C)</Text>
+                  <View style={styles.inputContainer}>
+                    <TextInput
+                      style={styles.input}
+                      keyboardType="numeric"
+                      value={formData.temperature}
+                      onChangeText={(text) => handleInputChange('temperature', text)}
+                      placeholder="0.0"
+                    />
+                    <Text style={styles.inputUnit}>°C</Text>
+                  </View>
+                </View>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Humidity (%)</Text>
+                  <View style={styles.inputContainer}>
+                    <TextInput
+                      style={styles.input}
+                      keyboardType="numeric"
+                      value={formData.humidity}
+                      onChangeText={(text) => handleInputChange('humidity', text)}
+                      placeholder="0.0"
+                    />
+                    <Text style={styles.inputUnit}>%</Text>
+                  </View>
+                </View>
+              </View>
+              
+              <View style={styles.inputRow}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Rainfall (mm)</Text>
+                  <View style={styles.inputContainer}>
+                    <TextInput
+                      style={styles.input}
+                      keyboardType="numeric"
+                      value={formData.rainfall}
+                      onChangeText={(text) => handleInputChange('rainfall', text)}
+                      placeholder="0.0"
+                    />
+                    <Text style={styles.inputUnit}>mm</Text>
+                  </View>
+                </View>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>pH Level</Text>
+                  <View style={styles.inputContainer}>
+                    <TextInput
+                      style={styles.input}
+                      keyboardType="numeric"
+                      value={formData.ph}
+                      onChangeText={(text) => handleInputChange('ph', text)}
+                      placeholder="0-14"
+                    />
+                    <Text style={styles.inputUnit}>pH</Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+
+            {/* Submit Button */}
+            <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+              <TouchableOpacity
+                style={styles.submitButton}
+                onPress={getRecommendations}
+                disabled={isLoading}
+                activeOpacity={0.8}
+              >
+                <LinearGradient
+                  colors={['#5D9C59', '#7EB56A']}
+                  style={styles.buttonGradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                >
+                  {isLoading ? (
+                    <ActivityIndicator color="white" />
+                  ) : (
+                    <View style={styles.buttonContent}>
+                      <Icon name="search" size={18} color="white" />
+                      <Text style={styles.submitButtonText}>Get Recommendations</Text>
+                    </View>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+            </Animated.View>
+          </View>
+
+          {/* Results Section */}
+          {recommendations.length > 0 && (
+            <View style={styles.resultsContainer}>
+              <View style={styles.resultsHeader}>
+                <Text style={styles.resultsTitle}>Recommended Crops</Text>
+                <View style={styles.resultsCount}>
+                  <Text style={styles.resultsCountText}>{recommendations.length} results</Text>
+                </View>
+              </View>
+              
+              {recommendations.map((crop, index) => (
+                <View 
+                  key={index} 
+                  style={[
+                    styles.cropCard,
+                    index === 0 && styles.topCropCard
+                  ]}
+                >
+                  <View style={styles.cropHeader}>
+                    <View style={styles.cropIcon}>
+                      <Icon 
+                        name={index === 0 ? "trophy" : "pagelines"} 
+                        size={20} 
+                        color={index === 0 ? "#FFD700" : "#5D9C59"} 
+                      />
+                    </View>
+                    <Text style={styles.cropName}>{crop.name}</Text>
+                    <View style={styles.confidenceBadge}>
+                      <Text style={styles.confidenceText}>
+                        {Math.round(crop.confidence * 100)}%
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.cropDescription}>
+                    {crop.description}
+                  </Text>
+                  <TouchableOpacity style={styles.detailsButton}>
+                    <Text style={styles.detailsButtonText}>View Details</Text>
+                    <Icon name="chevron-right" size={12} color="#5D9C59" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Error Message */}
+          {error && (
+            <Animated.View style={styles.errorContainer}>
+              <Icon name="exclamation-circle" size={18} color="#D32F2F" />
+              <Text style={styles.errorText}>{error}</Text>
+              <TouchableOpacity onPress={() => setError(null)}>
+                <Icon name="times" size={16} color="#D32F2F" />
+              </TouchableOpacity>
+            </Animated.View>
+          )}
+        </Animated.ScrollView>
+      </LinearGradient>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  gradientBackground: {
     flex: 1,
   },
   contentContainer: {
@@ -582,7 +565,7 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 5,
   },
-  gradient: {
+  buttonGradient: {
     padding: 18,
     alignItems: 'center',
     justifyContent: 'center',
