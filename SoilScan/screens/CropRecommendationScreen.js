@@ -16,16 +16,17 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 const { width } = Dimensions.get('window');
 
-const SOIL_TEXTURES = [
-  'Alluvial', 'Black', 'Cinder', 'Clay', 'Laterite',
-  'Loamy', 'Peat', 'Red', 'Sandy', 'Yellow'
-];
-
+// Updated soil types and crops to match your model
+const SOIL_TYPES = [  'Alluvial', 'Black', 'Cinder', 'Clay', 'Laterite',
+  'Loamy', 'Peat', 'Red', 'Sandy', 'Yellow'];
 const CROPS = [
-  'Sugarcane', 'Cotton', 'Millets', 'Paddy', 'Pulses'
+  'Barley', 'Cotton', 'Ground Nuts', 'Maize', 'Millets', 
+  'Oil seeds', 'Paddy', 'Pulses', 'Sugarcane', 'Tobacco', 'Wheat'
 ];
 
-const CropRecommendationScreen = ({ route }) => {
+const API_URL = 'https://your-huggingface-space-url.com/predict_fertilizer';
+
+const FertilizerRecommendationScreen = ({ route }) => {
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideUpAnim = useRef(new Animated.Value(30)).current;
@@ -34,16 +35,17 @@ const CropRecommendationScreen = ({ route }) => {
   const { soilTexture } = route.params || {};
   
   const [formData, setFormData] = useState({
-    soilTexture: '',
-    nitrogen: '',
-    phosphorus: '',
-    potassium: '',
     temperature: '',
+    humidity: '',
     moisture: '',
-    selectedCrop: ''
+    soilType: '',
+    cropType: '',
+    nitrogen: '',
+    potassium: '',
+    phosphorous: ''
   });
   
-  const [recommendations, setRecommendations] = useState([]);
+  const [recommendation, setRecommendation] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedTexture, setSelectedTexture] = useState(null);
@@ -71,7 +73,7 @@ const CropRecommendationScreen = ({ route }) => {
 
   const handleTextureSelect = (texture) => {
     setSelectedTexture(texture);
-    setFormData(prev => ({ ...prev, soilTexture: texture }));
+    setFormData(prev => ({ ...prev, soilType: texture }));
     
     Animated.sequence([
       Animated.timing(buttonScale, {
@@ -90,7 +92,7 @@ const CropRecommendationScreen = ({ route }) => {
 
   const handleCropSelect = (crop) => {
     setSelectedCrop(crop);
-    setFormData(prev => ({ ...prev, selectedCrop: crop }));
+    setFormData(prev => ({ ...prev, cropType: crop }));
     
     Animated.sequence([
       Animated.timing(buttonScale, {
@@ -112,18 +114,28 @@ const CropRecommendationScreen = ({ route }) => {
   };
 
   const validateForm = () => {
-    if (!formData.soilTexture) {
-      setError('Please select a soil texture');
+    if (!formData.soilType) {
+      setError('Please select a soil type');
       return false;
     }
     
-    if (!formData.selectedCrop) {
+    if (!formData.cropType) {
       setError('Please select a crop');
       return false;
     }
     
-    if (!formData.nitrogen || !formData.phosphorus || !formData.potassium) {
+    if (!formData.nitrogen || !formData.potassium || !formData.phosphorous) {
       setError('Please enter all NPK values');
+      return false;
+    }
+    
+    if (!formData.temperature) {
+      setError('Please enter temperature');
+      return false;
+    }
+    
+    if (!formData.humidity || formData.humidity < 0 || formData.humidity > 100) {
+      setError('Please enter a valid humidity % (0-100)');
       return false;
     }
     
@@ -135,34 +147,41 @@ const CropRecommendationScreen = ({ route }) => {
     return true;
   };
 
-  const getRecommendations = async () => {
+  const getRecommendation = async () => {
     if (!validateForm()) return;
     
     setIsLoading(true);
     setError(null);
     
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Mock data
-      const mockRecommendations = [
-        {
-          name: 'Urea',
-          confidence: 0.92,
-          description: 'Best for nitrogen deficiency. Apply 50kg/acre.'
+      const payload = {
+        Temperature: parseFloat(formData.temperature),
+        Humidity: parseFloat(formData.humidity),
+        Moisture: parseFloat(formData.moisture),
+        Soil_Type: formData.soilType,
+        Crop_Type: formData.cropType,
+        Nitrogen: parseFloat(formData.nitrogen),
+        Potassium: parseFloat(formData.potassium),
+        Phosphorous: parseFloat(formData.phosphorous)
+      };
+
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        {
-          name: 'DAP',
-          confidence: 0.85,
-          description: 'Ideal for phosphorus needs. Use 30kg/acre.'
-        }
-      ];
-      
-      setRecommendations(mockRecommendations);
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed with status ${response.status}`);
+      }
+
+      const data = await response.json();
+      setRecommendation(data.recommended_fertilizer);
       
     } catch (err) {
-      setError(err.message || 'Failed to get recommendations');
+      setError(err.message || 'Failed to get recommendation');
     } finally {
       setIsLoading(false);
     }
@@ -184,8 +203,8 @@ const CropRecommendationScreen = ({ route }) => {
           {/* Header */}
           <View style={styles.header}>
             <View>
-              <Text style={styles.headerTitle}>Fertilizer Recommendations</Text>
-              <Text style={styles.headerSubtitle}>Get personalized fertilizer suggestions</Text>
+              <Text style={styles.headerTitle}>Fertilizer Recommendation</Text>
+              <Text style={styles.headerSubtitle}>Get personalized fertilizer suggestion</Text>
             </View>
             {soilTexture && (
               <View style={styles.detectedTag}>
@@ -197,17 +216,17 @@ const CropRecommendationScreen = ({ route }) => {
 
           {/* Main Form */}
           <View style={styles.formCard}>
-            {/* Soil Texture Selection */}
+            {/* Soil Type Selection */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Icon name="envira" size={18} color="#5D9C59" style={styles.sectionIcon} />
-                <Text style={styles.sectionTitle}>Soil Texture</Text>
+                <Text style={styles.sectionTitle}>Soil Type</Text>
               </View>
-              <Text style={styles.sectionDescription}>Select the predominant soil texture in your area</Text>
+              <Text style={styles.sectionDescription}>Select your soil type</Text>
               
               <FlatList
                 horizontal
-                data={SOIL_TEXTURES}
+                data={SOIL_TYPES}
                 keyExtractor={item => item}
                 renderItem={({ item }) => (
                   <TouchableOpacity
@@ -269,11 +288,11 @@ const CropRecommendationScreen = ({ route }) => {
                 <Icon name="flask" size={16} color="#5D9C59" style={styles.sectionIcon} />
                 <Text style={styles.sectionTitle}>Soil Nutrients (NPK)</Text>
               </View>
-              <Text style={styles.sectionDescription}>Enter your soil nutrient levels in parts per million (ppm)</Text>
+              <Text style={styles.sectionDescription}>Enter your soil nutrient levels</Text>
               
               <View style={styles.inputRow}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Nitrogen    (N)</Text>
+                  <Text style={styles.inputLabel}>Nitrogen (N)</Text>
                   <View style={styles.inputContainer}>
                     <TextInput
                       style={styles.input}
@@ -282,21 +301,19 @@ const CropRecommendationScreen = ({ route }) => {
                       onChangeText={(text) => handleInputChange('nitrogen', text)}
                       placeholder="0.0"
                     />
-                    <Text style={styles.inputUnit}>ppm</Text>
                   </View>
                 </View>
                 
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Phosphorus (P)</Text>
+                  <Text style={styles.inputLabel}>Phosphorous (P)</Text>
                   <View style={styles.inputContainer}>
                     <TextInput
                       style={styles.input}
                       keyboardType="numeric"
-                      value={formData.phosphorus}
-                      onChangeText={(text) => handleInputChange('phosphorus', text)}
+                      value={formData.phosphorous}
+                      onChangeText={(text) => handleInputChange('phosphorous', text)}
                       placeholder="0.0"
                     />
-                    <Text style={styles.inputUnit}>ppm</Text>
                   </View>
                 </View>
                 
@@ -310,7 +327,6 @@ const CropRecommendationScreen = ({ route }) => {
                       onChangeText={(text) => handleInputChange('potassium', text)}
                       placeholder="0.0"
                     />
-                    <Text style={styles.inputUnit}>ppm</Text>
                   </View>
                 </View>
               </View>
@@ -320,7 +336,7 @@ const CropRecommendationScreen = ({ route }) => {
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Icon name="cloud" size={18} color="#5D9C59" style={styles.sectionIcon} />
-                <Text style={styles.sectionTitle}>Environmental Factors</Text>
+                <Text style={styles.sectionTitle}>Environmental Conditions</Text>
               </View>
               <Text style={styles.sectionDescription}>Enter your local conditions</Text>
               
@@ -336,6 +352,20 @@ const CropRecommendationScreen = ({ route }) => {
                       placeholder="0.0"
                     />
                     <Text style={styles.inputUnit}>°C</Text>
+                  </View>
+                </View>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Humidity (%)</Text>
+                  <View style={styles.inputContainer}>
+                    <TextInput
+                      style={styles.input}
+                      keyboardType="numeric"
+                      value={formData.humidity}
+                      onChangeText={(text) => handleInputChange('humidity', text)}
+                      placeholder="0-100"
+                    />
+                    <Text style={styles.inputUnit}>%</Text>
                   </View>
                 </View>
                 
@@ -359,7 +389,7 @@ const CropRecommendationScreen = ({ route }) => {
             <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
               <TouchableOpacity
                 style={styles.submitButton}
-                onPress={getRecommendations}
+                onPress={getRecommendation}
                 disabled={isLoading}
                 activeOpacity={0.8}
               >
@@ -374,7 +404,7 @@ const CropRecommendationScreen = ({ route }) => {
                   ) : (
                     <View style={styles.buttonContent}>
                       <Icon name="search" size={18} color="white" />
-                      <Text style={styles.submitButtonText}>Get Recommendations</Text>
+                      <Text style={styles.submitButtonText}>Get Recommendation</Text>
                     </View>
                   )}
                 </LinearGradient>
@@ -383,47 +413,23 @@ const CropRecommendationScreen = ({ route }) => {
           </View>
 
           {/* Results Section */}
-          {recommendations.length > 0 && (
+          {recommendation && (
             <View style={styles.resultsContainer}>
               <View style={styles.resultsHeader}>
-                <Text style={styles.resultsTitle}>Recommended Fertilizers</Text>
-                <View style={styles.resultsCount}>
-                  <Text style={styles.resultsCountText}>{recommendations.length} results</Text>
-                </View>
+                <Text style={styles.resultsTitle}>Recommended Fertilizer</Text>
               </View>
               
-              {recommendations.map((item, index) => (
-                <View 
-                  key={index} 
-                  style={[
-                    styles.cropCard,
-                    index === 0 && styles.topCropCard
-                  ]}
-                >
-                  <View style={styles.cropHeader}>
-                    <View style={styles.cropIcon}>
-                      <Icon 
-                        name={index === 0 ? "trophy" : "pagelines"} 
-                        size={20} 
-                        color={index === 0 ? "#FFD700" : "#5D9C59"} 
-                      />
-                    </View>
-                    <Text style={styles.cropName}>{item.name}</Text>
-                    <View style={styles.confidenceBadge}>
-                      <Text style={styles.confidenceText}>
-                        {Math.round(item.confidence * 100)}%
-                      </Text>
-                    </View>
+              <View style={[styles.cropCard, styles.topCropCard]}>
+                <View style={styles.cropHeader}>
+                  <View style={styles.cropIcon}>
+                    <Icon name="trophy" size={20} color="#FFD700" />
                   </View>
-                  <Text style={styles.cropDescription}>
-                    {item.description}
-                  </Text>
-                  <TouchableOpacity style={styles.detailsButton}>
-                    <Text style={styles.detailsButtonText}>View Details</Text>
-                    <Icon name="chevron-right" size={12} color="#5D9C59" />
-                  </TouchableOpacity>
+                  <Text style={styles.cropName}>{recommendation}</Text>
                 </View>
-              ))}
+                <Text style={styles.cropDescription}>
+                  Based on your soil and crop conditions, this is the most suitable fertilizer.
+                </Text>
+              </View>
             </View>
           )}
 
@@ -442,6 +448,7 @@ const CropRecommendationScreen = ({ route }) => {
     </View>
   );
 };
+
 
 // Styles remain the same as in your original code
 const styles = StyleSheet.create({
