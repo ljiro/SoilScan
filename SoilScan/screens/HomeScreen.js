@@ -49,7 +49,7 @@ const HomeScreen = ({ navigation }) => {
     },
     {
       question: "Why are fertilizer recommendations important?",
-      answer: "Different crops thrive in different soil types. Our recommendations help you choose fertilizers that will grow best in your specific soil conditions."
+      answer: "Different crops thrive in different soil types. Our recommendations help you choose fertilizers that will allow crops to grow best in your specific soil conditions."
     },
     {
       question: "How accurate are the soil analysis results?",
@@ -450,7 +450,7 @@ const HomeScreen = ({ navigation }) => {
               activeOpacity={0.8}
             >
               <Text style={styles.actionButtonText}>
-                Get Crop Recommendations
+                Get Fertilizer Recommendations
               </Text>
               <Icon name="arrow-right" size={14} color="white" />
             </TouchableOpacity>
