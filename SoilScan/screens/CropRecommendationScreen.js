@@ -13,6 +13,7 @@ import {
   Dimensions
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import LinearGradient from 'react-native-linear-gradient';
 
 const { width } = Dimensions.get('window');
 
@@ -53,12 +54,14 @@ const CropRecommendationScreen = ({ route }) => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 500,
+        duration: 800,
+        easing: Easing.out(Easing.ease),
         useNativeDriver: true
       }),
       Animated.spring(slideUpAnim, {
         toValue: 0,
-        friction: 8,
+        friction: 7,
+        tension: 40,
         useNativeDriver: true
       })
     ]).start();
@@ -80,9 +83,10 @@ const CropRecommendationScreen = ({ route }) => {
         duration: 100,
         useNativeDriver: true
       }),
-      Animated.timing(buttonScale, {
+      Animated.spring(buttonScale, {
         toValue: 1,
-        duration: 100,
+        friction: 3,
+        tension: 40,
         useNativeDriver: true
       })
     ]).start();
@@ -118,25 +122,29 @@ const CropRecommendationScreen = ({ route }) => {
     setError(null);
     
     try {
-      const response = await fetch('YOUR_API_ENDPOINT', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      // Simulate API call
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      // Mock data - replace with actual API call
+      const mockRecommendations = [
+        {
+          name: 'Wheat',
+          confidence: 0.92,
+          description: 'Ideal for your soil conditions. Requires moderate water and grows well in temperatures between 10-25°C.'
         },
-        body: JSON.stringify({
-          soil_type: formData.soilTexture,
-          nitrogen: parseFloat(formData.nitrogen),
-          phosphorus: parseFloat(formData.phosphorus),
-          potassium: parseFloat(formData.potassium),
-          temperature: parseFloat(formData.temperature),
-          humidity: parseFloat(formData.humidity),
-          rainfall: parseFloat(formData.rainfall),
-          ph: parseFloat(formData.ph)
-        }),
-      });
-
-      const data = await response.json();
-      setRecommendations(data.predictions || []);
+        {
+          name: 'Barley',
+          confidence: 0.85,
+          description: 'Suitable for your climate. Drought-resistant and grows well in slightly alkaline soils.'
+        },
+        {
+          name: 'Corn',
+          confidence: 0.78,
+          description: 'Good match for your nutrient levels. Requires warm temperatures and regular watering.'
+        }
+      ];
+      
+      setRecommendations(mockRecommendations);
       
     } catch (err) {
       setError(err.message || 'Failed to get recommendations');
@@ -146,16 +154,26 @@ const CropRecommendationScreen = ({ route }) => {
   };
 
   return (
-    <View style={styles.container}>
+    <LinearGradient 
+      colors={['#f8f9fa', '#e9f5e9']} 
+      style={styles.container}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+    >
       <Animated.ScrollView
         style={{ opacity: fadeAnim, transform: [{ translateY: slideUpAnim }] }}
         contentContainerStyle={styles.contentContainer}
+        showsVerticalScrollIndicator={false}
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Crop Recommendations</Text>
+          <View>
+            <Text style={styles.headerTitle}>Crop Recommendations</Text>
+            <Text style={styles.headerSubtitle}>Get personalized crop suggestions</Text>
+          </View>
           {soilTexture && (
             <View style={styles.detectedTag}>
+              <Icon name="leaf" size={14} color="#5D9C59" />
               <Text style={styles.detectedText}>Detected: {soilTexture}</Text>
             </View>
           )}
@@ -165,26 +183,33 @@ const CropRecommendationScreen = ({ route }) => {
         <View style={styles.formCard}>
           {/* Soil Texture Selection */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Soil Texture</Text>
+            <View style={styles.sectionHeader}>
+              <Icon name="envira" size={18} color="#5D9C59" style={styles.sectionIcon} />
+              <Text style={styles.sectionTitle}>Soil Texture</Text>
+            </View>
+            <Text style={styles.sectionDescription}>Select the predominant soil texture in your area</Text>
+            
             <FlatList
               horizontal
               data={SOIL_TEXTURES}
               keyExtractor={item => item}
               renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[
-                    styles.texturePill,
-                    selectedTexture === item && styles.selectedTexturePill
-                  ]}
-                  onPress={() => handleTextureSelect(item)}
-                >
-                  <Text style={[
-                    styles.texturePillText,
-                    selectedTexture === item && styles.selectedTexturePillText
-                  ]}>
-                    {item}
-                  </Text>
-                </TouchableOpacity>
+                <Animated.View style={{ transform: [{ scale: selectedTexture === item ? 1.05 : 1 }] }}>
+                  <TouchableOpacity
+                    style={[
+                      styles.texturePill,
+                      selectedTexture === item && styles.selectedTexturePill
+                    ]}
+                    onPress={() => handleTextureSelect(item)}
+                  >
+                    <Text style={[
+                      styles.texturePillText,
+                      selectedTexture === item && styles.selectedTexturePillText
+                    ]}>
+                      {item}
+                    </Text>
+                  </TouchableOpacity>
+                </Animated.View>
               )}
               contentContainerStyle={styles.textureContainer}
               showsHorizontalScrollIndicator={false}
@@ -193,86 +218,122 @@ const CropRecommendationScreen = ({ route }) => {
 
           {/* NPK Values */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Soil Nutrients (NPK)</Text>
+            <View style={styles.sectionHeader}>
+              <Icon name="flask" size={16} color="#5D9C59" style={styles.sectionIcon} />
+              <Text style={styles.sectionTitle}>Soil Nutrients (NPK)</Text>
+            </View>
+            <Text style={styles.sectionDescription}>Enter your soil nutrient levels in parts per million (ppm)</Text>
+            
             <View style={styles.inputRow}>
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Nitrogen (N)</Text>
-                <TextInput
-                  style={styles.input}
-                  keyboardType="numeric"
-                  value={formData.nitrogen}
-                  onChangeText={(text) => handleInputChange('nitrogen', text)}
-                  placeholder="ppm"
-                />
+                <View style={styles.inputContainer}>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.nitrogen}
+                    onChangeText={(text) => handleInputChange('nitrogen', text)}
+                    placeholder="0.0"
+                  />
+                  <Text style={styles.inputUnit}>ppm</Text>
+                </View>
               </View>
+              
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Phosphorus (P)</Text>
-                <TextInput
-                  style={styles.input}
-                  keyboardType="numeric"
-                  value={formData.phosphorus}
-                  onChangeText={(text) => handleInputChange('phosphorus', text)}
-                  placeholder="ppm"
-                />
+                <View style={styles.inputContainer}>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.phosphorus}
+                    onChangeText={(text) => handleInputChange('phosphorus', text)}
+                    placeholder="0.0"
+                  />
+                  <Text style={styles.inputUnit}>ppm</Text>
+                </View>
               </View>
+              
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Potassium (K)</Text>
-                <TextInput
-                  style={styles.input}
-                  keyboardType="numeric"
-                  value={formData.potassium}
-                  onChangeText={(text) => handleInputChange('potassium', text)}
-                  placeholder="ppm"
-                />
+                <View style={styles.inputContainer}>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.potassium}
+                    onChangeText={(text) => handleInputChange('potassium', text)}
+                    placeholder="0.0"
+                  />
+                  <Text style={styles.inputUnit}>ppm</Text>
+                </View>
               </View>
             </View>
           </View>
 
           {/* Environmental Factors */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Environmental Factors</Text>
+            <View style={styles.sectionHeader}>
+              <Icon name="cloud" size={18} color="#5D9C59" style={styles.sectionIcon} />
+              <Text style={styles.sectionTitle}>Environmental Factors</Text>
+            </View>
+            <Text style={styles.sectionDescription}>Enter your local climate conditions</Text>
+            
             <View style={styles.inputRow}>
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Temperature (°C)</Text>
-                <TextInput
-                  style={styles.input}
-                  keyboardType="numeric"
-                  value={formData.temperature}
-                  onChangeText={(text) => handleInputChange('temperature', text)}
-                  placeholder="°C"
-                />
+                <View style={styles.inputContainer}>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.temperature}
+                    onChangeText={(text) => handleInputChange('temperature', text)}
+                    placeholder="0.0"
+                  />
+                  <Text style={styles.inputUnit}>°C</Text>
+                </View>
               </View>
+              
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Humidity (%)</Text>
-                <TextInput
-                  style={styles.input}
-                  keyboardType="numeric"
-                  value={formData.humidity}
-                  onChangeText={(text) => handleInputChange('humidity', text)}
-                  placeholder="%"
-                />
+                <View style={styles.inputContainer}>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.humidity}
+                    onChangeText={(text) => handleInputChange('humidity', text)}
+                    placeholder="0.0"
+                  />
+                  <Text style={styles.inputUnit}>%</Text>
+                </View>
               </View>
             </View>
+            
             <View style={styles.inputRow}>
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Rainfall (mm)</Text>
-                <TextInput
-                  style={styles.input}
-                  keyboardType="numeric"
-                  value={formData.rainfall}
-                  onChangeText={(text) => handleInputChange('rainfall', text)}
-                  placeholder="mm"
-                />
+                <View style={styles.inputContainer}>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.rainfall}
+                    onChangeText={(text) => handleInputChange('rainfall', text)}
+                    placeholder="0.0"
+                  />
+                  <Text style={styles.inputUnit}>mm</Text>
+                </View>
               </View>
+              
               <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>pH Level (0-14)</Text>
-                <TextInput
-                  style={styles.input}
-                  keyboardType="numeric"
-                  value={formData.ph}
-                  onChangeText={(text) => handleInputChange('ph', text)}
-                  placeholder="0-14"
-                />
+                <Text style={styles.inputLabel}>pH Level</Text>
+                <View style={styles.inputContainer}>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.ph}
+                    onChangeText={(text) => handleInputChange('ph', text)}
+                    placeholder="0-14"
+                  />
+                  <Text style={styles.inputUnit}>pH</Text>
+                </View>
               </View>
             </View>
           </View>
@@ -283,15 +344,23 @@ const CropRecommendationScreen = ({ route }) => {
               style={styles.submitButton}
               onPress={getRecommendations}
               disabled={isLoading}
+              activeOpacity={0.8}
             >
-              {isLoading ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <View style={styles.buttonContent}>
-                  <Icon name="search" size={18} color="white" />
-                  <Text style={styles.submitButtonText}>Get Recommendations</Text>
-                </View>
-              )}
+              <LinearGradient
+                colors={['#5D9C59', '#7EB56A']}
+                style={styles.gradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              >
+                {isLoading ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <View style={styles.buttonContent}>
+                    <Icon name="search" size={18} color="white" />
+                    <Text style={styles.submitButtonText}>Get Recommendations</Text>
+                  </View>
+                )}
+              </LinearGradient>
             </TouchableOpacity>
           </Animated.View>
         </View>
@@ -299,12 +368,28 @@ const CropRecommendationScreen = ({ route }) => {
         {/* Results Section */}
         {recommendations.length > 0 && (
           <View style={styles.resultsContainer}>
-            <Text style={styles.resultsTitle}>Recommended Crops</Text>
+            <View style={styles.resultsHeader}>
+              <Text style={styles.resultsTitle}>Recommended Crops</Text>
+              <View style={styles.resultsCount}>
+                <Text style={styles.resultsCountText}>{recommendations.length} results</Text>
+              </View>
+            </View>
+            
             {recommendations.map((crop, index) => (
-              <View key={index} style={styles.cropCard}>
+              <View 
+                key={index} 
+                style={[
+                  styles.cropCard,
+                  index === 0 && styles.topCropCard
+                ]}
+              >
                 <View style={styles.cropHeader}>
                   <View style={styles.cropIcon}>
-                    <Icon name="pagelines" size={24} color="#5D9C59" />
+                    <Icon 
+                      name={index === 0 ? "trophy" : "pagelines"} 
+                      size={20} 
+                      color={index === 0 ? "#FFD700" : "#5D9C59"} 
+                    />
                   </View>
                   <Text style={styles.cropName}>{crop.name}</Text>
                   <View style={styles.confidenceBadge}>
@@ -316,6 +401,10 @@ const CropRecommendationScreen = ({ route }) => {
                 <Text style={styles.cropDescription}>
                   {crop.description}
                 </Text>
+                <TouchableOpacity style={styles.detailsButton}>
+                  <Text style={styles.detailsButtonText}>View Details</Text>
+                  <Icon name="chevron-right" size={12} color="#5D9C59" />
+                </TouchableOpacity>
               </View>
             ))}
           </View>
@@ -323,86 +412,126 @@ const CropRecommendationScreen = ({ route }) => {
 
         {/* Error Message */}
         {error && (
-          <View style={styles.errorContainer}>
-            <Icon name="exclamation-circle" size={16} color="#D32F2F" />
+          <Animated.View 
+            style={styles.errorContainer}
+            entering={Animated.spring(new Animated.Value(0), {
+              toValue: 1,
+              friction: 5,
+              useNativeDriver: true
+            })}
+          >
+            <Icon name="exclamation-circle" size={18} color="#D32F2F" />
             <Text style={styles.errorText}>{error}</Text>
-          </View>
+            <TouchableOpacity onPress={() => setError(null)}>
+              <Icon name="times" size={16} color="#D32F2F" />
+            </TouchableOpacity>
+          </Animated.View>
         )}
       </Animated.ScrollView>
-    </View>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f7fa'
   },
   contentContainer: {
-    padding: 20,
+    padding: 24,
     paddingBottom: 40
   },
   header: {
-    marginBottom: 20,
+    marginBottom: 24,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between'
   },
   headerTitle: {
     fontSize: 28,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#1A3C40',
+    marginBottom: 4,
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    color: '#6c757d',
+    fontWeight: '500',
   },
   detectedTag: {
     backgroundColor: '#E8F5E9',
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 10,
   },
   detectedText: {
     color: '#5D9C59',
     fontWeight: '600',
     fontSize: 12,
+    marginLeft: 6,
   },
   formCard: {
     backgroundColor: 'white',
-    borderRadius: 25,
-    padding: 25,
-    marginBottom: 20,
-    shadowColor: '#000',
+    borderRadius: 20,
+    padding: 24,
+    marginBottom: 24,
+    shadowColor: '#1A3C40',
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.08,
     shadowRadius: 20,
     elevation: 5
   },
   section: {
-    marginBottom: 20,
+    marginBottom: 24,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  sectionIcon: {
+    marginRight: 10,
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#1A3C40',
-    marginBottom: 15,
+  },
+  sectionDescription: {
+    fontSize: 13,
+    color: '#6c757d',
+    marginBottom: 16,
+    lineHeight: 18,
   },
   textureContainer: {
-    paddingBottom: 10,
+    paddingBottom: 4,
   },
   texturePill: {
-    paddingVertical: 8,
-    paddingHorizontal: 15,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
     borderRadius: 20,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#E0E0E0',
-    marginRight: 10,
+    marginRight: 12,
     backgroundColor: 'white',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   selectedTexturePill: {
     backgroundColor: '#5D9C59',
     borderColor: '#5D9C59',
+    shadowColor: '#5D9C59',
+    shadowOpacity: 0.2,
   },
   texturePillText: {
-    color: '#757575',
-    fontWeight: '500',
+    color: '#495057',
+    fontWeight: '600',
+    fontSize: 14,
   },
   selectedTexturePillText: {
     color: 'white',
@@ -410,33 +539,53 @@ const styles = StyleSheet.create({
   inputRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 15,
+    marginBottom: 16,
   },
   inputGroup: {
     flex: 1,
-    marginRight: 10,
+    marginRight: 12,
   },
   inputLabel: {
-    color: '#616161',
+    color: '#495057',
     marginBottom: 8,
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
   },
-  input: {
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#FAFAFA',
     borderRadius: 12,
-    padding: 15,
-    fontSize: 16,
     borderWidth: 1,
     borderColor: '#EEEEEE',
+    overflow: 'hidden',
+  },
+  input: {
+    flex: 1,
+    padding: 14,
+    fontSize: 16,
+    color: '#1A3C40',
+    fontWeight: '500',
+  },
+  inputUnit: {
+    paddingHorizontal: 14,
+    color: '#6c757d',
+    fontWeight: '500',
   },
   submitButton: {
-    backgroundColor: '#5D9C59',
-    borderRadius: 15,
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginTop: 8,
+    shadowColor: '#5D9C59',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 5,
+  },
+  gradient: {
     padding: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 10,
   },
   buttonContent: {
     flexDirection: 'row',
@@ -444,41 +593,69 @@ const styles = StyleSheet.create({
   },
   submitButtonText: {
     color: 'white',
-    fontWeight: '600',
+    fontWeight: '700',
     fontSize: 16,
     marginLeft: 10,
+    letterSpacing: 0.5,
   },
   resultsContainer: {
     backgroundColor: 'white',
-    borderRadius: 25,
-    padding: 25,
+    borderRadius: 20,
+    padding: 24,
+    shadowColor: '#1A3C40',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.08,
+    shadowRadius: 20,
+    elevation: 5
+  },
+  resultsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
   },
   resultsTitle: {
     fontSize: 22,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#1A3C40',
-    marginBottom: 20,
+  },
+  resultsCount: {
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  resultsCountText: {
+    color: '#5D9C59',
+    fontWeight: '700',
+    fontSize: 12,
   },
   cropCard: {
     backgroundColor: '#FAFAFA',
-    borderRadius: 18,
+    borderRadius: 16,
     padding: 20,
-    marginBottom: 15,
-    shadowColor: '#000',
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#5D9C59',
+  },
+  topCropCard: {
+    borderLeftColor: '#FFD700',
+    backgroundColor: '#FFF',
+    shadowColor: '#FFD700',
     shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.1,
     shadowRadius: 10,
     elevation: 3,
   },
   cropHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   cropIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#E8F5E9',
     justifyContent: 'center',
     alignItems: 'center',
@@ -487,7 +664,7 @@ const styles = StyleSheet.create({
   cropName: {
     flex: 1,
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#1A3C40',
   },
   confidenceBadge: {
@@ -498,23 +675,40 @@ const styles = StyleSheet.create({
   },
   confidenceText: {
     color: '#5D9C59',
-    fontWeight: '700',
+    fontWeight: '800',
+    fontSize: 14,
   },
   cropDescription: {
-    color: '#616161',
+    color: '#6c757d',
     lineHeight: 22,
+    marginBottom: 12,
+    fontSize: 14,
+  },
+  detailsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+  },
+  detailsButtonText: {
+    color: '#5D9C59',
+    fontWeight: '600',
+    fontSize: 14,
+    marginRight: 4,
   },
   errorContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFEBEE',
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 10,
+    padding: 16,
+    borderRadius: 12,
+    marginTop: 16,
+    justifyContent: 'space-between',
   },
   errorText: {
     color: '#D32F2F',
-    marginLeft: 8,
+    marginLeft: 10,
+    flex: 1,
+    fontWeight: '500',
   },
 });
 
