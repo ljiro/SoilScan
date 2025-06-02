@@ -734,4 +734,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default CropRecommendationScreen;
+export default FertilizerRecommendationScreen;

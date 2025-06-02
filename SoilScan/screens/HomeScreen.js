@@ -272,7 +272,7 @@ const HomeScreen = ({ navigation }) => {
   const handleRecommendationResponse = (response) => {
     setShowRecommendationPrompt(false);
     if (response && selectedTexture) {
-      navigation.navigate('Crop', { 
+      navigation.navigate('Fertilizer', { 
         soilTexture: selectedTexture.name 
       });
     }
