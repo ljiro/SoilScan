@@ -156,8 +156,8 @@ const CropRecommendationScreen = ({ route }) => {
           {/* Header */}
           <View style={styles.header}>
             <View>
-              <Text style={styles.headerTitle}>Crop Recommendations</Text>
-              <Text style={styles.headerSubtitle}>Get personalized crop suggestions</Text>
+              <Text style={styles.headerTitle}>Fertilizer Recommendations</Text>
+              <Text style={styles.headerSubtitle}>Get personalized fertilizer suggestions</Text>
             </View>
             {soilTexture && (
               <View style={styles.detectedTag}>
