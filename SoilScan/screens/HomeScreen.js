@@ -48,8 +48,8 @@ const HomeScreen = ({ navigation }) => {
       answer: "The app analyzes texture (sand, silt, clay composition), color, and structure to determine soil type and provide recommendations."
     },
     {
-      question: "Why are crop recommendations important?",
-      answer: "Different crops thrive in different soil types. Our recommendations help you choose crops that will grow best in your specific soil conditions."
+      question: "Why are fertilizer recommendations important?",
+      answer: "Different crops thrive in different soil types. Our recommendations help you choose fertilizers that will grow best in your specific soil conditions."
     },
     {
       question: "How accurate are the soil analysis results?",
@@ -524,7 +524,7 @@ const HomeScreen = ({ navigation }) => {
               The detected soil texture is: {selectedTexture?.name || 'Unknown'}
             </Text>
             <Text style={styles.promptText}>
-              Would you like to get crop recommendations for this soil type?
+              Would you like to get fertilizer recommendations for this soil type?
             </Text>
             <View style={styles.promptButtonContainer}>
               <TouchableOpacity
