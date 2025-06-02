@@ -212,7 +212,7 @@ const CropRecommendationScreen = ({ route }) => {
               
               <View style={styles.inputRow}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Nitrogen (N)</Text>
+                  <Text style={styles.inputLabel}>Nitrogen    (N)</Text>
                   <View style={styles.inputContainer}>
                     <TextInput
                       style={styles.input}
@@ -531,7 +531,7 @@ const styles = StyleSheet.create({
   inputLabel: {
     color: '#495057',
     marginBottom: 8,
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
   },
   inputContainer: {
