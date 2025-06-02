@@ -24,7 +24,7 @@ const CROPS = [
   'Oil seeds', 'Paddy', 'Pulses', 'Sugarcane', 'Tobacco', 'Wheat'
 ];
 
-const API_URL = 'https://your-huggingface-space-url.com/predict_fertilizer';
+const API_URL = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict_fertilizer';
 
 const FertilizerRecommendationScreen = ({ route }) => {
   // Animation values
