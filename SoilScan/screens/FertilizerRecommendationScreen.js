@@ -156,7 +156,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
     try {
       const payload = {
         Temperature: parseFloat(formData.temperature),
-        Humidity : parseFloat(formData.humidity),
+        Humidity: parseFloat(formData.humidity),
         Moisture: parseFloat(formData.moisture),
         Soil_Type: formData.soilType,
         Crop_Type: formData.cropType,
