@@ -34,11 +34,11 @@ The user can upload a photo or take a photo. This results in the following:
 
 
 
-**_Crop Recommendation_**
+**_Fertilizer Recommendation_**
 
-The user can input NPK values, pH, temperature, humidity, and rainfall. It results in the following:
-- Top 5 crop recommendations
-- Confidence level in the crop recommendation
+The user can input NPK values, temperature, Moisture, and Crop-Type. It results in the following:
+- Recommended fertilizer for the given soil properties
+- A description of the fertilizer
   
 ![Screenshot_20250516_150417_Expo Go](https://github.com/user-attachments/assets/472242c9-df5f-4278-9297-b03dd95d81f9)
 
