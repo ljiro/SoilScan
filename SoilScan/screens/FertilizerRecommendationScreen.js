@@ -156,7 +156,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
     try {
       const payload = {
         Temperature: parseFloat(formData.temperature),
-        Humidity: parseFloat(formData.humidity),
+        Humidity : parseFloat(formData.humidity),
         Moisture: parseFloat(formData.moisture),
         Soil_Type: formData.soilType,
         Crop_Type: formData.cropType,
@@ -292,7 +292,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
               
               <View style={styles.inputRow}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Nitrogen (N)</Text>
+                  <Text style={styles.inputLabel}>Nitrogen       (N)</Text>
                   <View style={styles.inputContainer}>
                     <TextInput
                       style={styles.input}
@@ -342,7 +342,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
               
               <View style={styles.inputRow}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Temperature (°C)</Text>
+                  <Text style={styles.inputLabel}>Temp (°C)</Text>
                   <View style={styles.inputContainer}>
                     <TextInput
                       style={styles.input}

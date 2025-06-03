@@ -26,7 +26,7 @@ const App = () => {
                 iconName = focused ? 'home' : 'home-outline';
               } else if (route.name === 'Guide') {
                 iconName = focused ? 'book' : 'book-outline';
-              } else if (route.name === 'Crop') {
+              } else if (route.name === 'Fertilizer') {
                 iconName = focused ? 'map' : 'map-outline';
               } else if (route.name === 'Profile') {
                 iconName = focused ? 'person' : 'person-outline';
