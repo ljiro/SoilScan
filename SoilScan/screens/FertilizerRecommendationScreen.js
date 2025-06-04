@@ -418,7 +418,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
               
               <View style={styles.inputRow}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Nitrogen (N)</Text>
+                  <Text style={styles.inputLabel}>Nitrogen     (N)</Text>
                   <View style={styles.inputContainer}>
                     <TextInput
                       style={styles.input}
