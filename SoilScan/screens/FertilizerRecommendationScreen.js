@@ -16,13 +16,130 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 const { width } = Dimensions.get('window');
 
-// Updated soil types and crops to match your model
-const SOIL_TYPES = [  'Alluvial', 'Black', 'Cinder', 'Clay', 'Laterite',
-  'Loamy', 'Peat', 'Red', 'Sandy', 'Yellow'];
+// Soil types and crops
+const SOIL_TYPES = [
+  'Alluvial', 'Black', 'Cinder', 'Clay', 'Laterite',
+  'Loamy', 'Peat', 'Red', 'Sandy', 'Yellow'
+];
+
 const CROPS = [
   'Barley', 'Cotton', 'Ground Nuts', 'Maize', 'Millets', 
   'Oil seeds', 'Paddy', 'Pulses', 'Sugarcane', 'Tobacco', 'Wheat'
 ];
+
+// Fertilizer database with detailed information
+const FERTILIZER_INFO = {
+  'Urea': {
+    description: 'A high-nitrogen fertilizer that promotes leafy growth',
+    composition: '46% Nitrogen',
+    benefits: [
+      'Promotes rapid vegetative growth',
+      'Improves protein content in crops',
+      'Cost-effective nitrogen source'
+    ],
+    application: 'Apply 100-150 kg per acre in 2-3 split doses',
+    icon: 'tint'
+  },
+  'DAP': {
+    description: 'Diammonium Phosphate provides both nitrogen and phosphorus',
+    composition: '18% Nitrogen, 46% P2O5',
+    benefits: [
+      'Excellent starter fertilizer',
+      'Promotes root development',
+      'Enhances flowering and fruiting'
+    ],
+    application: 'Apply 50-100 kg per acre at sowing time',
+    icon: 'tree'
+  },
+  'MOP': {
+    description: 'Muriate of Potash provides potassium for plant health',
+    composition: '60% K2O',
+    benefits: [
+      'Improves disease resistance',
+      'Enhances fruit quality',
+      'Regulates water uptake'
+    ],
+    application: 'Apply 40-80 kg per acre in split doses',
+    icon: 'apple'
+  },
+  'NPK': {
+    description: 'Balanced fertilizer with all three major nutrients',
+    composition: 'Varies (e.g., 10-26-26, 12-32-16)',
+    benefits: [
+      'Complete nutrition in single application',
+      'Custom blends available',
+      'Suitable for most crops'
+    ],
+    application: 'Apply 100-150 kg per acre based on soil test',
+    icon: 'balance-scale'
+  },
+  'SSP': {
+    description: 'Single Super Phosphate provides phosphorus and calcium',
+    composition: '16% P2O5, 11% Sulfur',
+    benefits: [
+      'Good for acidic soils',
+      'Provides secondary nutrients',
+      'Promotes root growth'
+    ],
+    application: 'Apply 150-200 kg per acre at sowing',
+    icon: 'pagelines'
+  },
+  'Organic': {
+    description: 'Natural fertilizers like compost or manure',
+    composition: 'Varies (0.5-3% N, P, K)',
+    benefits: [
+      'Improves soil structure',
+      'Enhances microbial activity',
+      'Long-term soil health'
+    ],
+    application: 'Apply 5-10 tons per acre before planting',
+    icon: 'leaf'
+  },
+  '10-10-10': {
+    description: 'Balanced NPK fertilizer with equal parts of each nutrient',
+    composition: '10% N, 10% P2O5, 10% K2O',
+    benefits: [
+      'Good general-purpose fertilizer',
+      'Suitable for most field crops',
+      'Easy to apply uniformly'
+    ],
+    application: 'Apply 200-300 kg per acre in split doses',
+    icon: 'cube'
+  },
+  '20-20-20': {
+    description: 'High-analysis balanced fertilizer',
+    composition: '20% N, 20% P2O5, 20% K2O',
+    benefits: [
+      'Good for high-yield crops',
+      'Quick nutrient availability',
+      'Water-soluble formulation'
+    ],
+    application: 'Apply 100-150 kg per acre in split doses',
+    icon: 'line-chart'
+  },
+  '28-28-0': {
+    description: 'High nitrogen and phosphorus fertilizer',
+    composition: '28% N, 28% P2O5',
+    benefits: [
+      'Excellent for wheat and cereals',
+      'Promotes tillering',
+      'Good for early growth stages'
+    ],
+    application: 'Apply 100-150 kg per acre at sowing',
+    icon: 'wheat'
+  },
+  '17-17-17': {
+    description: 'Balanced water-soluble fertilizer',
+    composition: '17% N, 17% P2O5, 17% K2O',
+    benefits: [
+      'Ideal for fertigation',
+      'Quick nutrient uptake',
+      'Good for horticultural crops'
+    ],
+    application: 'Apply through irrigation system',
+    icon: 'tint'
+  }
+};
 
 const API_URL = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict_fertilizer';
 
@@ -178,7 +295,16 @@ const FertilizerRecommendationScreen = ({ route }) => {
       }
 
       const data = await response.json();
-      setRecommendation(data.recommended_fertilizer);
+      setRecommendation({
+        name: data.recommended_fertilizer,
+        ...FERTILIZER_INFO[data.recommended_fertilizer] || {
+          description: 'Custom fertilizer recommendation',
+          composition: 'Varies based on your soil conditions',
+          benefits: ['Tailored to your specific crop and soil needs'],
+          application: 'Consult with local agricultural expert for precise application rates',
+          icon: 'star'
+        }
+      });
       
     } catch (err) {
       setError(err.message || 'Failed to get recommendation');
@@ -292,7 +418,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
               
               <View style={styles.inputRow}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Nitrogen       (N)</Text>
+                  <Text style={styles.inputLabel}>Nitrogen (N)</Text>
                   <View style={styles.inputContainer}>
                     <TextInput
                       style={styles.input}
@@ -422,13 +548,42 @@ const FertilizerRecommendationScreen = ({ route }) => {
               <View style={[styles.cropCard, styles.topCropCard]}>
                 <View style={styles.cropHeader}>
                   <View style={styles.cropIcon}>
-                    <Icon name="trophy" size={20} color="#FFD700" />
+                    <Icon name={recommendation.icon || 'trophy'} size={20} color="#5D9C59" />
                   </View>
-                  <Text style={styles.cropName}>{recommendation}</Text>
+                  <Text style={styles.cropName}>{recommendation.name}</Text>
                 </View>
-                <Text style={styles.cropDescription}>
-                  Based on your soil and crop conditions, this is the most suitable fertilizer.
-                </Text>
+                
+                <View style={styles.infoRow}>
+                  <Icon name="info-circle" size={16} color="#6c757d" />
+                  <Text style={styles.infoText}>{recommendation.description}</Text>
+                </View>
+                
+                <View style={styles.infoRow}>
+                  <Icon name="flask" size={16} color="#6c757d" />
+                  <Text style={styles.infoText}>
+                    <Text style={styles.infoLabel}>Composition: </Text>
+                    {recommendation.composition}
+                  </Text>
+                </View>
+                
+                <Text style={styles.sectionSubtitle}>Key Benefits:</Text>
+                {recommendation.benefits.map((benefit, index) => (
+                  <View key={index} style={styles.benefitItem}>
+                    <Icon name="check-circle" size={14} color="#5D9C59" />
+                    <Text style={styles.benefitText}>{benefit}</Text>
+                  </View>
+                ))}
+                
+                <Text style={styles.sectionSubtitle}>Application:</Text>
+                <View style={styles.infoRow}>
+                  <Icon name="calendar" size={16} color="#6c757d" />
+                  <Text style={styles.infoText}>{recommendation.application}</Text>
+                </View>
+                
+                <TouchableOpacity style={styles.learnMoreButton}>
+                  <Text style={styles.learnMoreText}>Learn more about application</Text>
+                  <Icon name="arrow-right" size={14} color="#5D9C59" />
+                </TouchableOpacity>
               </View>
             </View>
           )}
@@ -449,8 +604,6 @@ const FertilizerRecommendationScreen = ({ route }) => {
   );
 };
 
-
-// Styles remain the same as in your original code
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -731,6 +884,51 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     flex: 1,
     fontWeight: '500',
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  infoText: {
+    color: '#6c757d',
+    marginLeft: 10,
+    flex: 1,
+    lineHeight: 20,
+  },
+  infoLabel: {
+    fontWeight: '600',
+    color: '#1A3C40',
+  },
+  benefitItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  benefitText: {
+    color: '#6c757d',
+    marginLeft: 8,
+    flex: 1,
+    lineHeight: 20,
+  },
+  sectionSubtitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1A3C40',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  learnMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    marginTop: 12,
+  },
+  learnMoreText: {
+    color: '#5D9C59',
+    fontWeight: '600',
+    fontSize: 14,
+    marginRight: 6,
   },
 });
 
