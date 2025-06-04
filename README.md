@@ -30,6 +30,7 @@ The user can upload a photo or take a photo. This results in the following:
   
 ![Screenshot_20250516_150332_Expo Go](https://github.com/user-attachments/assets/b2eb372c-c96a-4467-9677-1b69eb607890)
 
+![Screenshot_20250604_212037_Expo Go](https://github.com/user-attachments/assets/869177e2-b25e-4078-92b7-f9479fb1b97b)
 
 
 
