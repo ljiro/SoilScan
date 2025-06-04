@@ -18,8 +18,6 @@ The machine learning logic is powered by a Python backend hosted on Hugging Face
 
 - Hugging Face Spaces – lightweight cloud backend for API hosting
 
-# Screenshots
-
 
 # Screenshots
 
