@@ -21,26 +21,66 @@ The machine learning logic is powered by a Python backend hosted on Hugging Face
 # Screenshots
 
 
+# Screenshots
+
 **_Soil Image Classification_**
 
 The user can upload a photo or take a photo. This results in the following:
 - Soil texture
 - Description of soil texture
 - Properties of the soil
-  
-![Screenshot_20250516_150332_Expo Go](https://github.com/user-attachments/assets/b2eb372c-c96a-4467-9677-1b69eb607890)
 
-![imgonline-com-ua-resizePERCPOAUEI9AFmKV](https://github.com/user-attachments/assets/80ffbbee-39a5-47e4-b410-f2e14b58ba95)
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/157204d5-6463-4590-804a-7e5e185a38ba" width="30%"/>
+  <img src="https://github.com/user-attachments/assets/61b70fa4-83d5-4f03-9629-7e928477dec7" width="30%"/>
+</p>
 
-
-
+---
 
 **_Fertilizer Recommendation_**
 
 The user can input NPK values, temperature, Moisture, and Crop-Type. It results in the following:
 - Recommended fertilizer for the given soil properties
 - A description of the fertilizer
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/3d1acd8f-0389-43b0-b60a-4ff661fae864" width="30%"/>
+  <img src="https://github.com/user-attachments/assets/e9d2c5ff-e96d-4e9e-be27-0c9e3be80b05" width="30%"/>
+  <img src="https://github.com/user-attachments/assets/198a2c5a-3f70-48ef-9999-02a9c3f775ff" width="30%"/>
+</p>
+
+# How to Run
+
+
+### Prerequisites
+- npm: 10.9.0
+- react-native: 0.78.2
+- react: 18.x
   
-![Screenshot_20250516_150417_Expo Go](https://github.com/user-attachments/assets/472242c9-df5f-4278-9297-b03dd95d81f9)
+To run the SoilScan app locally, follow these steps:
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/ljiro/SoilScan.git
+cd SoilScan
+```
+### 2. Use npx to start the project
+
+```bash
+# Make sure all dependencies are installed
+npm install
+
+# For local testing
+npx expo start
+
+# For over the internet testing
+npx expo start --tunnel
+```
+
+
+
+
+
 
 
