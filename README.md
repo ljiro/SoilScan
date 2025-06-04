@@ -12,7 +12,7 @@ The machine learning logic is powered by a Python backend hosted on Hugging Face
 
 - ResNet50 – for soil color classification from images
 
-- ExytaTreeClassifier – for fertilizer recommendation based on soil classification
+- ExrtaTreeClassifier – for fertilizer recommendation based on soil classification
 
 - Python – backend logic and ML model hosting
 
