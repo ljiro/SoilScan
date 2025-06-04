@@ -39,6 +39,7 @@ The user can upload a photo or take a photo. This results in the following:
 **_Fertilizer Recommendation_**
 
 *_Note: The prediction from the texture classification automatically becomes a selected parameter when you choose to get fertilizer recommendations_*
+
 The user can input NPK values, temperature, Moisture, and Crop-Type. It results in the following:
 - Recommended fertilizer for the given soil properties
 - A description of the fertilizer
