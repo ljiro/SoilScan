@@ -1,7 +1,7 @@
 
 # SoilScan
 
-A mobile-first smart agriculture app built with React Native and hosted using Expo and will be up for deployment. Soil Scan allows users to scan and analyze soil using their phone's camera. The app uses a ResNet50 convolutional neural network to classify soil color and a trained XGBoost model to recommend the most suitable crops based on the detected soil type.
+A mobile-first smart agriculture app built with React Native and hosted using Expo and will be up for deployment. Soil Scan allows users to scan and analyze soil using their phone's camera. The app uses a ResNet50 convolutional neural network to classify soil texture and a trained ExtraTreeClassifier model to recommend the most suitable fertilizer based on the detected soil texture.
 
 The machine learning logic is powered by a Python backend hosted on Hugging Face Spaces, which exposes an API to handle soil texture classification and fertilizer recommendation tasks. All model inference is handled server-side to keep the app lightweight and efficient.
 
