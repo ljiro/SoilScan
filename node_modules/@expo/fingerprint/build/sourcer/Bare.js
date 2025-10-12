@@ -100,14 +100,15 @@ async function getCoreAutolinkingSourcesFromExpoAndroid(projectRoot, options, us
     if (useRNCoreAutolinkingFromExpo === false || !options.platforms.includes('android')) {
         return [];
     }
+    const args = [
+        (0, ExpoResolver_1.resolveExpoAutolinkingCliPath)(projectRoot),
+        'react-native-config',
+        '--json',
+        '--platform',
+        'android',
+    ];
     try {
-        const { stdout } = await (0, spawn_async_1.default)('node', [
-            (0, ExpoResolver_1.resolveExpoAutolinkingCliPath)(projectRoot),
-            'react-native-config',
-            '--json',
-            '--platform',
-            'android',
-        ], { cwd: projectRoot });
+        const { stdout } = await (0, spawn_async_1.default)('node', args, { cwd: projectRoot });
         const config = JSON.parse(stdout);
         const results = await parseCoreAutolinkingSourcesAsync({
             config,
