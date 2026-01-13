@@ -195,10 +195,15 @@ const FertilizerRecommendationScreen = ({ route }) => {
         return;
       }
 
-      // Get current location
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
+      // Get current location with timeout for faster response
+      const location = await Promise.race([
+        Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Low, // Faster response
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Location timeout')), 5000)
+        ),
+      ]);
 
       const { latitude, longitude } = location.coords;
 
@@ -661,7 +666,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
 
               <View style={styles.inputRow}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Temperature (°C)</Text>
+                  <Text style={styles.inputLabel}>Temp (°C)</Text>
                   <TextInput
                     style={[styles.input, autoEnvironment && styles.inputAuto]}
                     keyboardType="numeric"
@@ -1008,16 +1013,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 16,
+    gap: 10,
   },
   inputGroup: {
     flex: 1,
-    marginRight: 12,
   },
   inputLabel: {
     color: '#495057',
     marginBottom: 8,
     fontSize: 12,
     fontWeight: '600',
+    height: 32,
   },
   input: {
     backgroundColor: '#FAFAFA',
