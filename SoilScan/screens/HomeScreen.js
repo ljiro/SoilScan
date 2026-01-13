@@ -16,10 +16,11 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 
 const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict_texture';
 
-const HomeScreen = ({ navigation }) => {
+const HomeScreen = ({ navigation, route }) => {
   // State initialization
   const [image, setImage] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -84,20 +85,34 @@ const HomeScreen = ({ navigation }) => {
       })
     ]).start();
 
-    // Request permissions
+    // Request permissions for gallery access
     (async () => {
       if (Platform.OS !== 'web') {
-        const { status: cameraStatus } = await ImagePicker.requestCameraPermissionsAsync();
         const { status: libraryStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (cameraStatus !== 'granted' || libraryStatus !== 'granted') {
+        if (libraryStatus !== 'granted') {
           Alert.alert(
             'Permissions Required',
-            'Camera and media library permissions are required to use this app.'
+            'Media library permission is required to upload photos from gallery.'
           );
         }
       }
     })();
   }, []);
+
+  // Handle image returned from CameraScreen
+  useEffect(() => {
+    if (route.params?.capturedImageUri && route.params?.fromCamera) {
+      const imageUri = route.params.capturedImageUri;
+      setImage(imageUri);
+      setResults(null);
+      setSelectedTexture(null);
+      setShowRecommendationPrompt(false);
+      uploadImageToAPI(imageUri);
+
+      // Clear the params to prevent re-triggering
+      navigation.setParams({ capturedImageUri: undefined, fromCamera: undefined });
+    }
+  }, [route.params?.capturedImageUri]);
 
   const toggleFaq = (index) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -225,26 +240,9 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  const handleCapture = async () => {
-    try {
-      const pickerResult = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.8,
-        allowsEditing: true,
-        aspect: [4, 3],
-      });
-
-      if (!pickerResult.canceled && pickerResult.assets?.length > 0) {
-        const imageUri = pickerResult.assets[0].uri;
-        setImage(imageUri);
-        setResults(null);
-        setSelectedTexture(null);
-        setShowRecommendationPrompt(false);
-        await uploadImageToAPI(imageUri);
-      }
-    } catch (error) {
-      Alert.alert('Error', `Camera error: ${error.message}`);
-    }
+  const handleCapture = () => {
+    // Navigate to custom camera screen with lens cap overlay
+    navigation.navigate('Camera');
   };
 
   const handleUpload = async () => {
@@ -253,16 +251,24 @@ const HomeScreen = ({ navigation }) => {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.8,
         allowsEditing: true,
-        aspect: [4, 3],
+        aspect: [1, 1], // Square aspect ratio to match camera capture
       });
 
       if (!pickerResult.canceled && pickerResult.assets?.length > 0) {
         const imageUri = pickerResult.assets[0].uri;
-        setImage(imageUri);
+
+        // Resize to 224x224 for consistency with camera capture
+        const manipulatedImage = await ImageManipulator.manipulateAsync(
+          imageUri,
+          [{ resize: { width: 224, height: 224 } }],
+          { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+        );
+
+        setImage(manipulatedImage.uri);
         setResults(null);
         setSelectedTexture(null);
         setShowRecommendationPrompt(false);
-        await uploadImageToAPI(imageUri);
+        await uploadImageToAPI(manipulatedImage.uri);
       }
     } catch (error) {
       Alert.alert('Error', `Upload error: ${error.message}`);
