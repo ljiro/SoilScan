@@ -43,7 +43,7 @@ export async function registerForPushNotifications() {
 
     try {
       token = (await Notifications.getExpoPushTokenAsync({
-        projectId: 'your-project-id', // Replace with your Expo project ID
+        projectId: '61bee9a1-025e-4abe-91c3-e2fa37aca19d',
       })).data;
 
       // Save token for later use

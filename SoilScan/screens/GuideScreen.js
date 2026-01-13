@@ -9,6 +9,8 @@ import {
   Dimensions,
   Alert,
   ActivityIndicator,
+  Platform,
+  Linking,
 } from "react-native";
 import MapView, { Marker, Polygon } from "react-native-maps";
 import * as Location from "expo-location";
@@ -29,6 +31,7 @@ export default function GuideScreen({ navigation }) {
   const [polygonCoords, setPolygonCoords] = useState([]);
   const [isDrawingMode, setIsDrawingMode] = useState(false);
   const [markers, setMarkers] = useState([]);
+  const [mapError, setMapError] = useState(false);
 
   const mapRef = useRef(null);
 
@@ -230,36 +233,89 @@ export default function GuideScreen({ navigation }) {
     );
   }
 
+  // Fallback UI when map fails to load (e.g., missing Google Maps API key on Android)
+  const renderMapFallback = () => (
+    <View style={styles.mapFallback}>
+      <Ionicons name="map-outline" size={64} color="#5D9C59" />
+      <Text style={styles.mapFallbackTitle}>Map Unavailable</Text>
+      <Text style={styles.mapFallbackText}>
+        {Platform.OS === 'android'
+          ? 'Google Maps API key is required for Android. The map feature will be available in the next update.'
+          : 'Unable to load map. Please check your internet connection.'}
+      </Text>
+      {location && (
+        <View style={styles.locationInfo}>
+          <Ionicons name="location" size={16} color="#5D9C59" />
+          <Text style={styles.locationInfoText}>
+            Your location: {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
+          </Text>
+        </View>
+      )}
+      <TouchableOpacity
+        style={styles.openMapsButton}
+        onPress={() => {
+          if (location) {
+            const url = Platform.select({
+              ios: `maps:?q=${location.latitude},${location.longitude}`,
+              android: `geo:${location.latitude},${location.longitude}?q=${location.latitude},${location.longitude}`,
+            });
+            Linking.openURL(url).catch(() => {
+              Alert.alert('Error', 'Could not open maps application');
+            });
+          }
+        }}
+      >
+        <Ionicons name="navigate" size={18} color="#fff" />
+        <Text style={styles.openMapsButtonText}>Open in Maps App</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
-      {/* Map View */}
-      <MapView
-        ref={mapRef}
-        style={styles.map}
-        initialRegion={location}
-        showsUserLocation={true}
-        showsMyLocationButton={false}
-        onPress={handleMapPress}
-      >
-        {/* Drawn polygon */}
-        {polygonCoords.length >= 3 && (
-          <Polygon
-            coordinates={polygonCoords}
-            fillColor="rgba(93, 156, 89, 0.3)"
-            strokeColor="#5D9C59"
-            strokeWidth={3}
-          />
-        )}
+      {/* Map View with error handling */}
+      {mapError ? (
+        renderMapFallback()
+      ) : (
+        <MapView
+          ref={mapRef}
+          style={styles.map}
+          initialRegion={location}
+          showsUserLocation={true}
+          showsMyLocationButton={false}
+          onPress={handleMapPress}
+          onMapReady={() => {
+            console.log('Map loaded successfully');
+          }}
+          onError={(error) => {
+            console.error('Map error:', error);
+            setMapError(true);
+          }}
+          mapType="standard"
+          loadingEnabled={true}
+          loadingIndicatorColor="#5D9C59"
+          loadingBackgroundColor="#f8f8f8"
+        >
+          {/* Drawn polygon */}
+          {polygonCoords.length >= 3 && (
+            <Polygon
+              coordinates={polygonCoords}
+              fillColor="rgba(93, 156, 89, 0.3)"
+              strokeColor="#5D9C59"
+              strokeWidth={3}
+            />
+          )}
 
-        {/* Markers for polygon vertices */}
-        {markers.map((coord, index) => (
-          <Marker
-            key={index}
-            coordinate={coord}
-            pinColor="#5D9C59"
-          />
-        ))}
-      </MapView>
+          {/* Markers for polygon vertices */}
+          {markers.map((coord, index) => (
+            <Marker
+              key={index}
+              coordinate={coord}
+              pinColor="#5D9C59"
+            />
+          ))}
+        </MapView>
+      )}
 
       {/* Weather Card */}
       {weatherData && (
@@ -423,6 +479,66 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
+  },
+  mapFallback: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#E8F5E9",
+    padding: 24,
+  },
+  mapFallbackTitle: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#1A3C40",
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  mapFallbackText: {
+    fontSize: 14,
+    color: "#6c757d",
+    textAlign: "center",
+    lineHeight: 22,
+    paddingHorizontal: 20,
+  },
+  locationInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginTop: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  locationInfoText: {
+    fontSize: 13,
+    color: "#495057",
+    marginLeft: 8,
+  },
+  openMapsButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#5D9C59",
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginTop: 20,
+    shadowColor: "#5D9C59",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  openMapsButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#fff",
+    marginLeft: 10,
   },
   weatherCard: {
     position: "absolute",

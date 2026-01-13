@@ -11,9 +11,29 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSettings } from '../contexts';
+import { scheduleLocalNotification, registerForPushNotifications } from '../services/notifications';
 
 const SettingsScreen = ({ navigation }) => {
   const { settings, updateSetting, resetSettings } = useSettings();
+
+  const handleTestNotification = async () => {
+    try {
+      // First ensure we have permission
+      await registerForPushNotifications();
+
+      // Send a test notification
+      await scheduleLocalNotification({
+        title: 'Test Notification',
+        body: 'Notifications are working correctly! 🎉',
+        data: { type: 'test' },
+      });
+
+      Alert.alert('Success', 'Test notification sent! You should see it now.');
+    } catch (error) {
+      console.error('Notification error:', error);
+      Alert.alert('Error', 'Failed to send notification. Please check notification permissions in device settings.');
+    }
+  };
 
   const handleClearData = () => {
     Alert.alert(
@@ -107,6 +127,16 @@ const SettingsScreen = ({ navigation }) => {
           value={settings.notifications}
           onValueChange={(value) => updateSetting('notifications', value)}
         />
+        <TouchableOpacity style={styles.settingItem} onPress={handleTestNotification}>
+          <View style={[styles.settingIcon, { backgroundColor: 'rgba(33, 150, 243, 0.1)' }]}>
+            <Ionicons name="paper-plane-outline" size={22} color="#2196F3" />
+          </View>
+          <View style={styles.settingContent}>
+            <Text style={[styles.settingTitle, { color: '#2196F3' }]}>Test Notification</Text>
+            <Text style={styles.settingSubtitle}>Send a test notification</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#2196F3" />
+        </TouchableOpacity>
         <SettingItem
           icon="moon-outline"
           title="Dark Mode"

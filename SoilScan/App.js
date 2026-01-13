@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { SafeAreaView, StatusBar, View, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { SafeAreaView, StatusBar, View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -22,6 +22,13 @@ import { NetworkProvider, SettingsProvider } from './contexts';
 
 // Storage utilities
 import { hasAcceptedConsent } from './utils/storage';
+
+// Notifications
+import {
+  registerForPushNotifications,
+  addNotificationReceivedListener,
+  addNotificationResponseListener,
+} from './services/notifications';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -107,10 +114,54 @@ const TabNavigator = () => {
 const App = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [hasConsent, setHasConsent] = useState(false);
+  const [expoPushToken, setExpoPushToken] = useState('');
+  const notificationListener = useRef();
+  const responseListener = useRef();
+  const navigationRef = useRef();
 
   useEffect(() => {
     checkConsentStatus();
   }, []);
+
+  // Initialize notifications after consent is accepted
+  useEffect(() => {
+    if (hasConsent) {
+      // Register for push notifications
+      registerForPushNotifications().then(token => {
+        if (token) {
+          setExpoPushToken(token);
+          console.log('Push token:', token);
+        }
+      });
+
+      // Listen for incoming notifications while app is foregrounded
+      notificationListener.current = addNotificationReceivedListener(notification => {
+        console.log('Notification received:', notification);
+      });
+
+      // Listen for notification taps
+      responseListener.current = addNotificationResponseListener(response => {
+        console.log('Notification response:', response);
+        const data = response.notification.request.content.data;
+
+        // Navigate based on notification type
+        if (data?.type === 'scan_complete') {
+          navigationRef.current?.navigate('Home');
+        } else if (data?.type === 'fertilizer_reminder') {
+          navigationRef.current?.navigate('Fertilizer');
+        }
+      });
+
+      return () => {
+        if (notificationListener.current) {
+          notificationListener.current.remove();
+        }
+        if (responseListener.current) {
+          responseListener.current.remove();
+        }
+      };
+    }
+  }, [hasConsent]);
 
   const checkConsentStatus = async () => {
     try {
@@ -161,7 +212,7 @@ const App = () => {
       <NetworkProvider>
         <SafeAreaView style={{ flex: 1 }}>
           <StatusBar backgroundColor="#5D9C59" barStyle="light-content" />
-          <NavigationContainer>
+          <NavigationContainer ref={navigationRef}>
             <Stack.Navigator screenOptions={{ headerShown: false }}>
               <Stack.Screen name="MainTabs" component={TabNavigator} />
               <Stack.Screen

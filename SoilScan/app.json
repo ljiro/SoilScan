@@ -2,7 +2,7 @@
   "expo": {
     "name": "SoilScan",
     "slug": "SoilScan",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -11,15 +11,29 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "SoilScan needs camera access to photograph soil samples for analysis."
+          "cameraPermission": "SoilScan needs camera access to photograph soil samples for texture analysis."
         }
       ],
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "SoilScan needs location access to show your position on the map and provide local soil data.",
-          "locationAlwaysPermission": "SoilScan needs location access to show your position on the map.",
-          "locationWhenInUsePermission": "SoilScan needs location access to show your position on the map."
+          "locationWhenInUsePermission": "SoilScan uses your location to fetch local weather data (temperature, humidity) for accurate fertilizer recommendations.",
+          "isAndroidBackgroundLocationEnabled": false,
+          "isIosBackgroundLocationEnabled": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#5D9C59",
+          "sounds": []
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "SoilScan needs photo library access to select soil images for analysis."
         }
       ]
     ],
@@ -30,8 +44,11 @@
     },
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.liam.mrls.SoilScan",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "SoilScan needs location access to show your position on the map and provide local soil data."
+        "NSLocationWhenInUseUsageDescription": "SoilScan uses your location to fetch local weather data for accurate fertilizer recommendations.",
+        "NSCameraUsageDescription": "SoilScan needs camera access to photograph soil samples for texture analysis.",
+        "NSPhotoLibraryUsageDescription": "SoilScan needs photo library access to select soil images for analysis."
       }
     },
     "android": {
@@ -46,11 +63,19 @@
       },
       "package": "com.liam.mrls.SoilScan",
       "permissions": [
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
-      ]
+        "CAMERA",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+        }
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
