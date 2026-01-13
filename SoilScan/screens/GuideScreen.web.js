@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
+import { OpenStreetMap } from "../components";
 
 // OpenWeatherMap API (free tier)
 const WEATHER_API_KEY = "bd5e378503939ddaee76f12ad7a97608";
@@ -93,54 +94,49 @@ export default function GuideScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* Web Placeholder for Map */}
-      <View style={styles.webMapPlaceholder}>
-        <Ionicons name="map-outline" size={64} color="#5D9C59" />
-        <Text style={styles.webMapText}>Map View</Text>
-        <Text style={styles.webMapSubtext}>Maps are only available on mobile devices</Text>
+      {/* OpenStreetMap for Web */}
+      <OpenStreetMap
+        latitude={location?.latitude || 14.5995}
+        longitude={location?.longitude || 120.9842}
+        zoom={15}
+        showUserLocation={true}
+        style={styles.map}
+      />
 
-        {/* Weather Info */}
-        {weatherData && (
-          <View style={styles.weatherCard}>
-            <Ionicons name="partly-sunny" size={24} color="#FFB347" />
-            <Text style={styles.weatherTemp}>{Math.round(weatherData.main.temp)}°C</Text>
-            <Text style={styles.weatherDesc}>{weatherData.weather[0].description}</Text>
+      {/* Weather Card Overlay */}
+      {weatherData && (
+        <View style={styles.weatherCard}>
+          <Ionicons name="partly-sunny" size={24} color="#FFB347" />
+          <Text style={styles.weatherTemp}>{Math.round(weatherData.main.temp)}°C</Text>
+          <Text style={styles.weatherDesc}>{weatherData.weather[0].description}</Text>
+          <View style={styles.weatherDetails}>
+            <View style={styles.weatherItem}>
+              <Ionicons name="water" size={14} color="#5D9C59" />
+              <Text style={styles.weatherValue}>{weatherData.main.humidity}%</Text>
+            </View>
           </View>
-        )}
+        </View>
+      )}
 
-        {/* Location Info */}
-        {location && (
-          <Text style={styles.locationText}>
-            Location: {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
-          </Text>
-        )}
-
-        {/* Soil Data Card */}
-        <View style={styles.dataCard}>
-          <Text style={styles.cardTitle}>Soil Health Data</Text>
-          <View style={styles.dataRow}>
-            <Text style={styles.dataLabel}>Nitrogen:</Text>
-            <Text style={styles.dataValue}>{soilData.nitrogen} ppm</Text>
+      {/* Floating Soil Data Card */}
+      <View style={styles.floatingCard}>
+        <Text style={styles.cardTitle}>Soil Health Data</Text>
+        <View style={styles.dataGrid}>
+          <View style={styles.dataItem}>
+            <Text style={styles.dataLabel}>N</Text>
+            <Text style={styles.dataValue}>{soilData.nitrogen}</Text>
           </View>
-          <View style={styles.dataRow}>
-            <Text style={styles.dataLabel}>Phosphorus:</Text>
-            <Text style={styles.dataValue}>{soilData.phosphorus} ppm</Text>
+          <View style={styles.dataItem}>
+            <Text style={styles.dataLabel}>P</Text>
+            <Text style={styles.dataValue}>{soilData.phosphorus}</Text>
           </View>
-          <View style={styles.dataRow}>
-            <Text style={styles.dataLabel}>Potassium:</Text>
-            <Text style={styles.dataValue}>{soilData.potassium} ppm</Text>
+          <View style={styles.dataItem}>
+            <Text style={styles.dataLabel}>K</Text>
+            <Text style={styles.dataValue}>{soilData.potassium}</Text>
           </View>
-          <View style={styles.dataRow}>
-            <Text style={styles.dataLabel}>pH:</Text>
+          <View style={styles.dataItem}>
+            <Text style={styles.dataLabel}>pH</Text>
             <Text style={styles.dataValue}>{soilData.ph}</Text>
-          </View>
-          <View style={styles.dataRow}>
-            <Text style={styles.dataLabel}>Temperature:</Text>
-            <Text style={styles.dataValue}>{soilData.temperature}°C</Text>
-          </View>
-          <View style={styles.dataRow}>
-            <Text style={styles.dataLabel}>Humidity:</Text>
-            <Text style={styles.dataValue}>{soilData.humidity}%</Text>
           </View>
         </View>
 
@@ -150,9 +146,15 @@ export default function GuideScreen({ navigation }) {
           onPress={handleFertilizerRecommendation}
           activeOpacity={0.8}
         >
-          <Ionicons name="leaf-outline" size={20} color="#fff" />
-          <Text style={styles.fertilizerButtonText}>Get Fertilizer Recommendation</Text>
+          <Ionicons name="leaf-outline" size={18} color="#fff" />
+          <Text style={styles.fertilizerButtonText}>Get Recommendation</Text>
         </TouchableOpacity>
+      </View>
+
+      {/* OpenStreetMap Attribution */}
+      <View style={styles.osmBanner}>
+        <Ionicons name="map" size={14} color="#5D9C59" />
+        <Text style={styles.osmBannerText}>OpenStreetMap</Text>
       </View>
     </View>
   );
@@ -174,36 +176,23 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#6c757d",
   },
-  webMapPlaceholder: {
+  map: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#E8F5E9",
-    padding: 24,
-  },
-  webMapText: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: "#1A3C40",
-    marginTop: 16,
-  },
-  webMapSubtext: {
-    fontSize: 14,
-    color: "#6c757d",
-    marginTop: 8,
-    marginBottom: 24,
   },
   weatherCard: {
+    position: "absolute",
+    top: 16,
+    left: 16,
     backgroundColor: "#fff",
     borderRadius: 16,
     padding: 16,
     alignItems: "center",
-    marginBottom: 16,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
+    minWidth: 120,
   },
   weatherTemp: {
     fontSize: 24,
@@ -216,66 +205,104 @@ const styles = StyleSheet.create({
     color: "#6c757d",
     textTransform: "capitalize",
   },
-  locationText: {
-    fontSize: 12,
-    color: "#6c757d",
-    marginBottom: 16,
+  weatherDetails: {
+    flexDirection: "row",
+    marginTop: 8,
   },
-  dataCard: {
+  weatherItem: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  weatherValue: {
+    fontSize: 12,
+    color: "#495057",
+    fontWeight: "500",
+    marginLeft: 4,
+  },
+  floatingCard: {
+    position: "absolute",
+    bottom: 60,
+    left: 16,
+    right: 16,
     backgroundColor: "#fff",
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 20,
-    width: "100%",
-    maxWidth: 400,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
   },
   cardTitle: {
     fontWeight: "700",
-    fontSize: 18,
-    marginBottom: 16,
+    fontSize: 16,
+    marginBottom: 12,
     textAlign: "center",
     color: "#1A3C40",
   },
-  dataRow: {
+  dataGrid: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
+    justifyContent: "space-around",
+    marginBottom: 16,
+  },
+  dataItem: {
+    alignItems: "center",
+    backgroundColor: "#E8F5E9",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
   },
   dataLabel: {
-    fontWeight: "500",
-    color: "#495057",
-    fontSize: 14,
-  },
-  dataValue: {
     fontWeight: "600",
     color: "#5D9C59",
-    fontSize: 14,
+    fontSize: 12,
+  },
+  dataValue: {
+    fontWeight: "700",
+    color: "#1A3C40",
+    fontSize: 18,
+    marginTop: 2,
   },
   fertilizerButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#FF6B35",
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 14,
-    marginTop: 24,
-    elevation: 3,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 12,
     shadowColor: "#FF6B35",
     shadowOpacity: 0.3,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
   fertilizerButtonText: {
     color: "#fff",
     fontWeight: "700",
-    fontSize: 16,
-    marginLeft: 10,
+    fontSize: 14,
+    marginLeft: 8,
+  },
+  osmBanner: {
+    position: "absolute",
+    bottom: 16,
+    alignSelf: "center",
+    backgroundColor: "rgba(255,255,255,0.9)",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  osmBannerText: {
+    fontSize: 12,
+    color: "#5D9C59",
+    fontWeight: "600",
+    marginLeft: 6,
   },
 });

@@ -15,6 +15,7 @@ import {
 import MapView, { Marker, Polygon } from "react-native-maps";
 import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
+import { OpenStreetMap } from "../components";
 
 const { width, height } = Dimensions.get("window");
 
@@ -233,49 +234,33 @@ export default function GuideScreen({ navigation }) {
     );
   }
 
-  // Fallback UI when map fails to load (e.g., missing Google Maps API key on Android)
-  const renderMapFallback = () => (
-    <View style={styles.mapFallback}>
-      <Ionicons name="map-outline" size={64} color="#5D9C59" />
-      <Text style={styles.mapFallbackTitle}>Map Unavailable</Text>
-      <Text style={styles.mapFallbackText}>
-        {Platform.OS === 'android'
-          ? 'Google Maps API key is required for Android. The map feature will be available in the next update.'
-          : 'Unable to load map. Please check your internet connection.'}
-      </Text>
-      {location && (
-        <View style={styles.locationInfo}>
-          <Ionicons name="location" size={16} color="#5D9C59" />
-          <Text style={styles.locationInfoText}>
-            Your location: {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
-          </Text>
-        </View>
-      )}
-      <TouchableOpacity
-        style={styles.openMapsButton}
-        onPress={() => {
-          if (location) {
-            const url = Platform.select({
-              ios: `maps:?q=${location.latitude},${location.longitude}`,
-              android: `geo:${location.latitude},${location.longitude}?q=${location.latitude},${location.longitude}`,
-            });
-            Linking.openURL(url).catch(() => {
-              Alert.alert('Error', 'Could not open maps application');
-            });
-          }
-        }}
-      >
-        <Ionicons name="navigate" size={18} color="#fff" />
-        <Text style={styles.openMapsButtonText}>Open in Maps App</Text>
-      </TouchableOpacity>
+  // OpenStreetMap fallback (free, no API key needed)
+  const renderOpenStreetMapFallback = () => (
+    <View style={styles.osmContainer}>
+      <OpenStreetMap
+        latitude={location?.latitude || 14.5995}
+        longitude={location?.longitude || 120.9842}
+        zoom={15}
+        markers={markers}
+        polygonCoords={polygonCoords}
+        onMapPress={handleMapPress}
+        showUserLocation={true}
+        style={styles.osmMap}
+      />
+
+      {/* Floating info banner */}
+      <View style={styles.osmBanner}>
+        <Ionicons name="information-circle" size={16} color="#5D9C59" />
+        <Text style={styles.osmBannerText}>Using OpenStreetMap (Free)</Text>
+      </View>
     </View>
   );
 
   return (
     <View style={styles.container}>
-      {/* Map View with error handling */}
+      {/* Map View with error handling - use OpenStreetMap as fallback */}
       {mapError ? (
-        renderMapFallback()
+        renderOpenStreetMapFallback()
       ) : (
         <MapView
           ref={mapRef}
@@ -480,65 +465,36 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
-  mapFallback: {
+  osmContainer: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#E8F5E9",
-    padding: 24,
+    position: "relative",
   },
-  mapFallbackTitle: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#1A3C40",
-    marginTop: 16,
-    marginBottom: 8,
+  osmMap: {
+    flex: 1,
   },
-  mapFallbackText: {
-    fontSize: 14,
-    color: "#6c757d",
-    textAlign: "center",
-    lineHeight: 22,
-    paddingHorizontal: 20,
-  },
-  locationInfo: {
+  osmBanner: {
+    position: "absolute",
+    bottom: 16,
+    left: 16,
+    right: 16,
+    backgroundColor: "rgba(255,255,255,0.95)",
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
-    paddingHorizontal: 16,
+    justifyContent: "center",
     paddingVertical: 10,
+    paddingHorizontal: 16,
     borderRadius: 12,
-    marginTop: 20,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 3,
   },
-  locationInfoText: {
+  osmBannerText: {
     fontSize: 13,
-    color: "#495057",
-    marginLeft: 8,
-  },
-  openMapsButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#5D9C59",
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 12,
-    marginTop: 20,
-    shadowColor: "#5D9C59",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  openMapsButtonText: {
-    fontSize: 16,
+    color: "#5D9C59",
     fontWeight: "600",
-    color: "#fff",
-    marginLeft: 10,
+    marginLeft: 8,
   },
   weatherCard: {
     position: "absolute",
