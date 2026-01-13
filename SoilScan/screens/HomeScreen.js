@@ -30,6 +30,8 @@ const HomeScreen = ({ navigation, route }) => {
   const [showRecommendationPrompt, setShowRecommendationPrompt] = useState(false);
   const [expandedFaqIndex, setExpandedFaqIndex] = useState(null);
   const [showLoadingModal, setShowLoadingModal] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
 
   // Animation values
   const fadeAnim = useState(new Animated.Value(0))[0];
@@ -211,7 +213,16 @@ const HomeScreen = ({ navigation, route }) => {
 
       setResults(formattedResult);
       setSelectedTexture(formattedResult);
-      setShowRecommendationPrompt(true);
+
+      // Show success animation and confetti for peak-end moment
+      setShowSuccessAnimation(true);
+      setShowConfetti(true);
+
+      // Hide confetti after 3 seconds
+      setTimeout(() => {
+        setShowConfetti(false);
+        setShowRecommendationPrompt(true);
+      }, 2500);
       
     } catch (error) {
       console.error('Upload error:', error);
@@ -352,7 +363,7 @@ const HomeScreen = ({ navigation, route }) => {
           ) : (
             <View style={styles.placeholder}>
               <Animated.View style={{ transform: [{ rotate: rotateInterpolate }] }}>
-                <Icon
+                <Ionicons
                   name="camera"
                   size={48}
                   color="#FFFFFF"
@@ -382,7 +393,7 @@ const HomeScreen = ({ navigation, route }) => {
               onPressOut={handlePressOut}
               activeOpacity={0.8}
             >
-              <Icon name="camera" size={18} color="white" style={styles.buttonIcon} />
+              <Ionicons name="camera" size={18} color="white" style={styles.buttonIcon} />
               <Text style={styles.buttonText}>Capture</Text>
             </TouchableOpacity>
           </Animated.View>
@@ -395,7 +406,7 @@ const HomeScreen = ({ navigation, route }) => {
               onPressOut={handlePressOut}
               activeOpacity={0.8}
             >
-              <Icon name="image" size={18} color="#5D9C59" style={styles.buttonIcon} />
+              <Ionicons name="images" size={18} color="#5D9C59" style={styles.buttonIcon} />
               <Text style={[styles.buttonText, { color: '#5D9C59' }]}>Gallery</Text>
             </TouchableOpacity>
           </Animated.View>
@@ -459,7 +470,7 @@ const HomeScreen = ({ navigation, route }) => {
               <Text style={styles.actionButtonText}>
                 Get Fertilizer Recommendations
               </Text>
-              <Icon name="arrow-right" size={14} color="white" />
+              <Ionicons name="arrow-forward" size={14} color="white" />
             </TouchableOpacity>
           </Animated.View>
 
@@ -482,10 +493,10 @@ const HomeScreen = ({ navigation, route }) => {
             >
               <View style={styles.faqHeader}>
                 <Text style={styles.faqQuestionText}>{faq.question}</Text>
-                <Icon 
-                  name={expandedFaqIndex === index ? "minus" : "plus"} 
-                  size={16} 
-                  color="#5D9C59" 
+                <Ionicons
+                  name={expandedFaqIndex === index ? "remove" : "add"}
+                  size={16}
+                  color="#5D9C59"
                 />
               </View>
             </TouchableOpacity>
@@ -561,26 +572,43 @@ const HomeScreen = ({ navigation, route }) => {
         onRequestClose={() => {}}
       >
         <View style={styles.loadingModalContainer}>
-          <Animated.View 
+          <Animated.View
             style={[
               styles.loadingModalContent,
-              { 
+              {
                 opacity: fadeAnim,
                 transform: [{ scale: fadeAnim.interpolate({
                   inputRange: [0, 1],
                   outputRange: [0.9, 1]
-                })}] 
+                })}]
               }
             ]}
           >
-            <Animated.View style={{ transform: [{ rotate: rotateInterpolate }] }}>
-              <ActivityIndicator size="large" color="#5D9C59" />
-            </Animated.View>
-            <Text style={styles.loadingModalText}>Analyzing Soil Sample</Text>
-            <Text style={styles.loadingModalSubtext}>Please wait while we process your image...</Text>
+            {showSuccessAnimation ? (
+              <SuccessAnimation
+                size={80}
+                onComplete={() => {
+                  setShowSuccessAnimation(false);
+                  setShowLoadingModal(false);
+                }}
+              />
+            ) : (
+              <Animated.View style={{ transform: [{ rotate: rotateInterpolate }] }}>
+                <ActivityIndicator size="large" color="#5D9C59" />
+              </Animated.View>
+            )}
+            <Text style={styles.loadingModalText}>
+              {showSuccessAnimation ? 'Analysis Complete!' : 'Analyzing Soil Sample'}
+            </Text>
+            <Text style={styles.loadingModalSubtext}>
+              {showSuccessAnimation ? 'Your soil has been identified' : 'Please wait while we process your image...'}
+            </Text>
           </Animated.View>
         </View>
       </Modal>
+
+      {/* Confetti celebration */}
+      <Confetti active={showConfetti} />
     </Animated.ScrollView>
   );
 };

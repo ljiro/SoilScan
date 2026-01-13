@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
-import Icon from 'react-native-vector-icons/FontAwesome';
+import { Ionicons } from '@expo/vector-icons';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -175,7 +175,7 @@ const CameraScreen = ({ navigation }) => {
   if (!permission.granted) {
     return (
       <View style={styles.permissionContainer}>
-        <Icon name="camera" size={64} color="#5D9C59" />
+        <Ionicons name="camera" size={64} color="#5D9C59" />
         <Text style={styles.permissionTitle}>Camera Access Required</Text>
         <Text style={styles.permissionText}>
           SoilScan needs camera access to photograph soil samples for analysis.
@@ -241,7 +241,7 @@ const CameraScreen = ({ navigation }) => {
         <View style={styles.controlsContainer}>
           {/* Close button */}
           <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
-            <Icon name="times" size={24} color="#FFFFFF" />
+            <Ionicons name="close" size={24} color="#FFFFFF" />
           </TouchableOpacity>
 
           {/* Capture button */}

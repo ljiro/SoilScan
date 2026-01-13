@@ -12,8 +12,9 @@ import {
   Dimensions,
   Alert
 } from 'react-native';
-import { FontAwesome as Icon } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { NPKChart, StepIndicator, SuccessAnimation, Confetti } from '../components';
 
 const { width } = Dimensions.get('window');
 
@@ -405,7 +406,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
             </View>
             {routeParams.soilType && (
               <View style={styles.detectedTag}>
-                <Icon name="leaf" size={14} color="#5D9C59" />
+                <Ionicons name="leaf" size={14} color="#5D9C59" />
                 <Text style={styles.detectedText}>From Soil Scan</Text>
               </View>
             )}
@@ -414,7 +415,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
           {/* Data Pre-filled Indicator */}
           {routeParams.soilType && (
             <View style={styles.prefilledBanner}>
-              <Icon name="check-circle" size={16} color="#fff" />
+              <Ionicons name="checkmark-circle" size={16} color="#fff" />
               <Text style={styles.prefilledText}>
                 Soil analysis data pre-filled automatically
               </Text>
@@ -427,7 +428,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
             {/* Soil Type Selection */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <Icon name="envira" size={18} color="#5D9C59" style={styles.sectionIcon} />
+                <Ionicons name="leaf" size={18} color="#5D9C59" style={styles.sectionIcon} />
                 <Text style={styles.sectionTitle}>Soil Type</Text>
                 {routeParams.soilType && (
                   <View style={styles.autoFilledBadge}>
@@ -465,7 +466,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
             {/* Crop Selection */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <Icon name="pagelines" size={18} color="#5D9C59" style={styles.sectionIcon} />
+                <Ionicons name="leaf-outline" size={18} color="#5D9C59" style={styles.sectionIcon} />
                 <Text style={styles.sectionTitle}>Select Crop</Text>
               </View>
               <Text style={styles.sectionDescription}>Choose the crop you want to grow</Text>
@@ -498,7 +499,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
             {/* NPK Values - SIMPLIFIED */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <Icon name="flask" size={16} color="#5D9C59" style={styles.sectionIcon} />
+                <Ionicons name="flask" size={16} color="#5D9C59" style={styles.sectionIcon} />
                 <Text style={styles.sectionTitle}>Soil Nutrients (NPK)</Text>
                 {routeParams.nitrogen && (
                   <View style={styles.autoFilledBadge}>
@@ -547,7 +548,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
             {/* Environmental Factors - SIMPLIFIED */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <Icon name="cloud" size={18} color="#5D9C59" style={styles.sectionIcon} />
+                <Ionicons name="cloud" size={18} color="#5D9C59" style={styles.sectionIcon} />
                 <Text style={styles.sectionTitle}>Environmental Conditions</Text>
                 {routeParams.temperature && (
                   <View style={styles.autoFilledBadge}>
@@ -611,7 +612,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
                     <ActivityIndicator color="white" />
                   ) : (
                     <View style={styles.buttonContent}>
-                      <Icon name="search" size={18} color="white" />
+                      <Ionicons name="search" size={18} color="white" />
                       <Text style={styles.submitButtonText}>Get Fertilizer</Text>
                     </View>
                   )}
@@ -623,7 +624,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
                 onPress={clearForm}
                 activeOpacity={0.8}
               >
-                <Icon name="refresh" size={16} color="#6c757d" />
+                <Ionicons name="refresh" size={16} color="#6c757d" />
                 <Text style={styles.clearButtonText}>Clear</Text>
               </TouchableOpacity>
             </View>
@@ -642,18 +643,18 @@ const FertilizerRecommendationScreen = ({ route }) => {
               <View style={[styles.cropCard, styles.topCropCard]}>
                 <View style={styles.cropHeader}>
                   <View style={styles.cropIcon}>
-                    <Icon name={recommendation.icon || 'trophy'} size={20} color="#5D9C59" />
+                    <Ionicons name="leaf" size={20} color="#5D9C59" />
                   </View>
                   <Text style={styles.cropName}>{recommendation.name}</Text>
                 </View>
                 
                 <View style={styles.infoRow}>
-                  <Icon name="info-circle" size={16} color="#6c757d" />
+                  <Ionicons name="information-circle" size={16} color="#6c757d" />
                   <Text style={styles.infoText}>{recommendation.description}</Text>
                 </View>
                 
                 <View style={styles.infoRow}>
-                  <Icon name="flask" size={16} color="#6c757d" />
+                  <Ionicons name="flask" size={16} color="#6c757d" />
                   <Text style={styles.infoText}>
                     <Text style={styles.infoLabel}>Composition: </Text>
                     {recommendation.composition}
@@ -663,14 +664,14 @@ const FertilizerRecommendationScreen = ({ route }) => {
                 <Text style={styles.sectionSubtitle}>Key Benefits:</Text>
                 {recommendation.benefits.map((benefit, index) => (
                   <View key={index} style={styles.benefitItem}>
-                    <Icon name="check-circle" size={14} color="#5D9C59" />
+                    <Ionicons name="checkmark-circle" size={14} color="#5D9C59" />
                     <Text style={styles.benefitText}>{benefit}</Text>
                   </View>
                 ))}
                 
                 <Text style={styles.sectionSubtitle}>Application:</Text>
                 <View style={styles.infoRow}>
-                  <Icon name="calendar" size={16} color="#6c757d" />
+                  <Ionicons name="calendar" size={16} color="#6c757d" />
                   <Text style={styles.infoText}>{recommendation.application}</Text>
                 </View>
               </View>
@@ -680,10 +681,10 @@ const FertilizerRecommendationScreen = ({ route }) => {
           {/* Error Message */}
           {error && (
             <View style={styles.errorContainer}>
-              <Icon name="exclamation-circle" size={18} color="#D32F2F" />
+              <Ionicons name="alert-circle" size={18} color="#D32F2F" />
               <Text style={styles.errorText}>{error}</Text>
               <TouchableOpacity onPress={() => setError(null)}>
-                <Icon name="times" size={16} color="#D32F2F" />
+                <Ionicons name="close" size={16} color="#D32F2F" />
               </TouchableOpacity>
             </View>
           )}
