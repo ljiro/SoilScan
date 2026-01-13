@@ -12,7 +12,7 @@ import {
   Dimensions,
   Alert
 } from 'react-native';
-import Icon from 'react-native-vector-icons/FontAwesome';
+import { FontAwesome as Icon } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
 const { width } = Dimensions.get('window');
@@ -382,31 +382,6 @@ const FertilizerRecommendationScreen = ({ route }) => {
     setError(null);
   };
 
-  const showDebugInfo = () => {
-    Alert.alert(
-      'Debug Information',
-      `Route Params:
-      N: ${routeParams.nitrogen}
-      P: ${routeParams.phosphorous}
-      K: ${routeParams.potassium}
-      Soil: ${routeParams.soilType}
-      Temp: ${routeParams.temperature}
-      Humidity: ${routeParams.humidity}
-      Moisture: ${routeParams.moisture}
-      
-      Current Form Data:
-      N: ${formData.nitrogen}
-      P: ${formData.phosphorous}
-      K: ${formData.potassium}
-      Soil: ${formData.soilType}
-      Crop: ${formData.cropType}
-      Temp: ${formData.temperature}
-      Humidity: ${formData.humidity}
-      Moisture: ${formData.moisture}`,
-      [{ text: 'OK' }]
-    );
-  };
-
   return (
     <View style={styles.container}>
       <LinearGradient 
@@ -446,10 +421,6 @@ const FertilizerRecommendationScreen = ({ route }) => {
             </View>
           )}
 
-          {/* Debug Button */}
-          <TouchableOpacity style={styles.debugButton} onPress={showDebugInfo}>
-            <Text style={styles.debugButtonText}>Debug Info</Text>
-          </TouchableOpacity>
 
           {/* Main Form */}
           <View style={styles.formCard}>
@@ -725,12 +696,13 @@ const FertilizerRecommendationScreen = ({ route }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#F8F9FA',
   },
   gradientBackground: {
     flex: 1,
   },
   contentContainer: {
-    padding: 24,
+    padding: 16,
     paddingBottom: 40
   },
   header: {
@@ -740,14 +712,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between'
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '800',
     color: '#1A3C40',
     marginBottom: 4,
   },
   headerSubtitle: {
-    fontSize: 14,
-    color: '#6c757d',
+    fontSize: 16,
+    color: '#6C757D',
     fontWeight: '500',
   },
   detectedTag: {
@@ -780,27 +752,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginLeft: 8,
   },
-  debugButton: {
-    backgroundColor: '#FF6B35',
-    padding: 8,
-    borderRadius: 8,
-    alignSelf: 'flex-end',
-    marginBottom: 8,
-  },
-  debugButtonText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: '600',
-  },
   formCard: {
     backgroundColor: 'white',
-    borderRadius: 20,
+    borderRadius: 24,
     padding: 24,
     marginBottom: 24,
     shadowColor: '#1A3C40',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.08,
-    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
     elevation: 5
   },
   section: {
@@ -815,7 +775,7 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
     color: '#1A3C40',
     flex: 1,
@@ -832,10 +792,10 @@ const styles = StyleSheet.create({
     fontSize: 10,
   },
   sectionDescription: {
-    fontSize: 13,
-    color: '#6c757d',
+    fontSize: 14,
+    color: '#6C757D',
     marginBottom: 16,
-    lineHeight: 18,
+    lineHeight: 20,
   },
   textureContainer: {
     paddingBottom: 4,
@@ -899,13 +859,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   submitButton: {
-    borderRadius: 14,
+    borderRadius: 12,
     overflow: 'hidden',
     flex: 1,
     shadowColor: '#5D9C59',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
     elevation: 5,
   },
   buttonGradient: {
@@ -930,11 +890,11 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: '#E9ECEF',
     backgroundColor: 'white',
   },
   clearButtonText: {
-    color: '#6c757d',
+    color: '#6C757D',
     fontWeight: '600',
     fontSize: 14,
     marginLeft: 6,
@@ -942,11 +902,11 @@ const styles = StyleSheet.create({
   resultsContainer: {
     backgroundColor: 'white',
     borderRadius: 20,
-    padding: 24,
+    padding: 20,
     shadowColor: '#1A3C40',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.08,
-    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
     elevation: 5
   },
   resultsHeader: {
@@ -956,8 +916,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   resultsTitle: {
-    fontSize: 22,
-    fontWeight: '800',
+    fontSize: 20,
+    fontWeight: '700',
     color: '#1A3C40',
   },
   confidenceBadge: {
@@ -1014,10 +974,10 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   infoText: {
-    color: '#6c757d',
+    color: '#6C757D',
     marginLeft: 10,
     flex: 1,
-    lineHeight: 20,
+    lineHeight: 22,
   },
   infoLabel: {
     fontWeight: '600',
@@ -1029,10 +989,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   benefitText: {
-    color: '#6c757d',
+    color: '#6C757D',
     marginLeft: 8,
     flex: 1,
-    lineHeight: 20,
+    lineHeight: 22,
   },
   sectionSubtitle: {
     fontSize: 15,

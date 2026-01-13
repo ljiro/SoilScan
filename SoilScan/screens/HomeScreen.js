@@ -14,9 +14,10 @@ import {
   Easing,
   LayoutAnimation
 } from 'react-native';
-import Icon from 'react-native-vector-icons/FontAwesome';
+import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import { SuccessAnimation, Confetti, SkeletonResultCard } from '../components';
 
 const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict_texture';
 
