@@ -71,13 +71,6 @@ const HomeScreen = ({ navigation, route }) => {
       answer: "Our AI model has an accuracy of about 85-90% for common soil types. For best results, ensure your photo is clear and representative of your soil."
     }
   ];
-  
-  // Configure LayoutAnimation
-  LayoutAnimation.configureNext(LayoutAnimation.create(
-    300,
-    LayoutAnimation.Types.easeInEaseOut,
-    LayoutAnimation.Properties.opacity
-  ));
 
   useEffect(() => {
     // Entry animations

@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
   Platform,
 } from "react-native";
-import MapView, { Marker, Polygon, PROVIDER_GOOGLE } from "react-native-maps";
+import MapView, { Marker, Polygon } from "react-native-maps";
 import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -237,7 +237,6 @@ export default function GuideScreen({ navigation }) {
       <MapView
         ref={mapRef}
         style={styles.map}
-        provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
         initialRegion={location}
         showsUserLocation={true}
         showsMyLocationButton={false}
