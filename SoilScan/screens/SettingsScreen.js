@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -9,15 +9,11 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSettings } from '../contexts';
 
 const SettingsScreen = ({ navigation }) => {
-  // Settings state
-  const [notifications, setNotifications] = useState(true);
-  const [darkMode, setDarkMode] = useState(false);
-  const [locationServices, setLocationServices] = useState(true);
-  const [autoWeather, setAutoWeather] = useState(true);
-  const [metricUnits, setMetricUnits] = useState(true);
-  const [highAccuracyGPS, setHighAccuracyGPS] = useState(false);
+  const { settings, updateSetting, resetSettings } = useSettings();
 
   const handleClearData = () => {
     Alert.alert(
@@ -28,8 +24,13 @@ const SettingsScreen = ({ navigation }) => {
         {
           text: 'Clear',
           style: 'destructive',
-          onPress: () => {
-            Alert.alert('Success', 'App data cleared successfully.');
+          onPress: async () => {
+            try {
+              await AsyncStorage.clear();
+              Alert.alert('Success', 'App data cleared successfully. Please restart the app.');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to clear app data.');
+            }
           },
         },
       ]
@@ -44,13 +45,8 @@ const SettingsScreen = ({ navigation }) => {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Reset',
-          onPress: () => {
-            setNotifications(true);
-            setDarkMode(false);
-            setLocationServices(true);
-            setAutoWeather(true);
-            setMetricUnits(true);
-            setHighAccuracyGPS(false);
+          onPress: async () => {
+            await resetSettings();
             Alert.alert('Success', 'Settings have been reset to defaults.');
           },
         },
@@ -58,8 +54,13 @@ const SettingsScreen = ({ navigation }) => {
     );
   };
 
-  const SettingItem = ({ icon, title, subtitle, value, onValueChange, type = 'switch' }) => (
-    <View style={styles.settingItem}>
+  const SettingItem = ({ icon, title, subtitle, value, onValueChange, type = 'switch', onPress }) => (
+    <TouchableOpacity
+      style={styles.settingItem}
+      onPress={onPress}
+      disabled={type === 'switch' && !onPress}
+      activeOpacity={onPress ? 0.7 : 1}
+    >
       <View style={styles.settingIcon}>
         <Ionicons name={icon} size={22} color="#5D9C59" />
       </View>
@@ -78,7 +79,7 @@ const SettingsScreen = ({ navigation }) => {
       {type === 'arrow' && (
         <Ionicons name="chevron-forward" size={20} color="#999" />
       )}
-    </View>
+    </TouchableOpacity>
   );
 
   const SectionHeader = ({ title }) => (
@@ -103,15 +104,15 @@ const SettingsScreen = ({ navigation }) => {
           icon="notifications-outline"
           title="Push Notifications"
           subtitle="Receive alerts about soil analysis"
-          value={notifications}
-          onValueChange={setNotifications}
+          value={settings.notifications}
+          onValueChange={(value) => updateSetting('notifications', value)}
         />
         <SettingItem
           icon="moon-outline"
           title="Dark Mode"
-          subtitle="Use dark theme"
-          value={darkMode}
-          onValueChange={setDarkMode}
+          subtitle="Use dark theme (coming soon)"
+          value={settings.darkMode}
+          onValueChange={(value) => updateSetting('darkMode', value)}
         />
       </View>
 
@@ -122,22 +123,22 @@ const SettingsScreen = ({ navigation }) => {
           icon="location-outline"
           title="Location Services"
           subtitle="Enable GPS for map features"
-          value={locationServices}
-          onValueChange={setLocationServices}
+          value={settings.locationServices}
+          onValueChange={(value) => updateSetting('locationServices', value)}
         />
         <SettingItem
           icon="navigate-outline"
           title="High Accuracy GPS"
           subtitle="Uses more battery for precise location"
-          value={highAccuracyGPS}
-          onValueChange={setHighAccuracyGPS}
+          value={settings.highAccuracyGPS}
+          onValueChange={(value) => updateSetting('highAccuracyGPS', value)}
         />
         <SettingItem
           icon="cloud-outline"
           title="Auto-fetch Weather"
           subtitle="Automatically get weather data"
-          value={autoWeather}
-          onValueChange={setAutoWeather}
+          value={settings.autoWeather}
+          onValueChange={(value) => updateSetting('autoWeather', value)}
         />
       </View>
 
@@ -147,9 +148,9 @@ const SettingsScreen = ({ navigation }) => {
         <SettingItem
           icon="thermometer-outline"
           title="Metric Units"
-          subtitle={metricUnits ? 'Temperature in Celsius' : 'Temperature in Fahrenheit'}
-          value={metricUnits}
-          onValueChange={setMetricUnits}
+          subtitle={settings.metricUnits ? 'Temperature in Celsius, distance in km' : 'Temperature in Fahrenheit, distance in miles'}
+          value={settings.metricUnits}
+          onValueChange={(value) => updateSetting('metricUnits', value)}
         />
       </View>
 
@@ -182,7 +183,7 @@ const SettingsScreen = ({ navigation }) => {
       {/* About Section */}
       <SectionHeader title="ABOUT" />
       <View style={styles.section}>
-        <TouchableOpacity style={styles.settingItem}>
+        <View style={styles.settingItem}>
           <View style={styles.settingIcon}>
             <Ionicons name="information-circle-outline" size={22} color="#5D9C59" />
           </View>
@@ -190,9 +191,12 @@ const SettingsScreen = ({ navigation }) => {
             <Text style={styles.settingTitle}>App Version</Text>
             <Text style={styles.settingSubtitle}>1.0.0</Text>
           </View>
-        </TouchableOpacity>
+        </View>
 
-        <TouchableOpacity style={styles.settingItem}>
+        <TouchableOpacity
+          style={styles.settingItem}
+          onPress={() => navigation.navigate('Terms')}
+        >
           <View style={styles.settingIcon}>
             <Ionicons name="document-text-outline" size={22} color="#5D9C59" />
           </View>
@@ -203,7 +207,10 @@ const SettingsScreen = ({ navigation }) => {
           <Ionicons name="chevron-forward" size={20} color="#999" />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.settingItem}>
+        <TouchableOpacity
+          style={styles.settingItem}
+          onPress={() => navigation.navigate('Privacy')}
+        >
           <View style={styles.settingIcon}>
             <Ionicons name="shield-checkmark-outline" size={22} color="#5D9C59" />
           </View>

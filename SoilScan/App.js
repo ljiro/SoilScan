@@ -14,6 +14,11 @@ import CameraScreen from './screens/CameraScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import HelpScreen from './screens/HelpScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
+import TermsScreen from './screens/TermsScreen';
+import PrivacyScreen from './screens/PrivacyScreen';
+
+// Contexts
+import { NetworkProvider, SettingsProvider } from './contexts';
 
 // Storage utilities
 import { hasAcceptedConsent } from './utils/storage';
@@ -139,45 +144,67 @@ const App = () => {
   // Show onboarding if consent not yet accepted
   if (!hasConsent) {
     return (
-      <SafeAreaView style={{ flex: 1 }}>
-        <StatusBar backgroundColor="#5D9C59" barStyle="light-content" />
-        <OnboardingScreen onConsentAccepted={handleConsentAccepted} />
-      </SafeAreaView>
+      <SettingsProvider>
+        <NetworkProvider>
+          <SafeAreaView style={{ flex: 1 }}>
+            <StatusBar backgroundColor="#5D9C59" barStyle="light-content" />
+            <OnboardingScreen onConsentAccepted={handleConsentAccepted} />
+          </SafeAreaView>
+        </NetworkProvider>
+      </SettingsProvider>
     );
   }
 
   // Show main app after consent accepted
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <StatusBar backgroundColor="#5D9C59" barStyle="light-content" />
-      <NavigationContainer>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="MainTabs" component={TabNavigator} />
-          <Stack.Screen
-            name="Camera"
-            component={CameraScreen}
-            options={{
-              animation: 'slide_from_bottom',
-              presentation: 'fullScreenModal',
-            }}
-          />
-          <Stack.Screen
-            name="Settings"
-            component={SettingsScreen}
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="Help"
-            component={HelpScreen}
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-        </Stack.Navigator>
-      </NavigationContainer>
-    </SafeAreaView>
+    <SettingsProvider>
+      <NetworkProvider>
+        <SafeAreaView style={{ flex: 1 }}>
+          <StatusBar backgroundColor="#5D9C59" barStyle="light-content" />
+          <NavigationContainer>
+            <Stack.Navigator screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="MainTabs" component={TabNavigator} />
+              <Stack.Screen
+                name="Camera"
+                component={CameraScreen}
+                options={{
+                  animation: 'slide_from_bottom',
+                  presentation: 'fullScreenModal',
+                }}
+              />
+              <Stack.Screen
+                name="Settings"
+                component={SettingsScreen}
+                options={{
+                  animation: 'slide_from_right',
+                }}
+              />
+              <Stack.Screen
+                name="Help"
+                component={HelpScreen}
+                options={{
+                  animation: 'slide_from_right',
+                }}
+              />
+              <Stack.Screen
+                name="Terms"
+                component={TermsScreen}
+                options={{
+                  animation: 'slide_from_right',
+                }}
+              />
+              <Stack.Screen
+                name="Privacy"
+                component={PrivacyScreen}
+                options={{
+                  animation: 'slide_from_right',
+                }}
+              />
+            </Stack.Navigator>
+          </NavigationContainer>
+        </SafeAreaView>
+      </NetworkProvider>
+    </SettingsProvider>
   );
 };
 

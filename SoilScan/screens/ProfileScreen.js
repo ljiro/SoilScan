@@ -8,10 +8,21 @@ import {
   Share,
   Alert,
   ActivityIndicator,
+  Image,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { getScanStats } from '../utils/storage';
+import * as ImagePicker from 'expo-image-picker';
+import {
+  getScanStats,
+  getUserProfile,
+  saveUserProfile,
+  saveUserAvatar,
+  getSavedGuides,
+  removeGuide,
+} from '../utils/storage';
 
 const ProfileScreen = ({ navigation }) => {
   const [stats, setStats] = useState({
@@ -21,29 +32,90 @@ const ProfileScreen = ({ navigation }) => {
   });
   const [recentScans, setRecentScans] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [profile, setProfile] = useState({
+    name: 'SoilScan User',
+    email: '',
+    avatarUri: null,
+  });
+  const [savedGuides, setSavedGuides] = useState([]);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showGuidesModal, setShowGuidesModal] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
 
-  // Load stats from storage when screen comes into focus
+  // Load stats and profile when screen comes into focus
   useFocusEffect(
     useCallback(() => {
-      loadStats();
+      loadData();
     }, [])
   );
 
-  const loadStats = async () => {
+  const loadData = async () => {
     setIsLoading(true);
     try {
-      const scanStats = await getScanStats();
+      const [scanStats, userProfile, guides] = await Promise.all([
+        getScanStats(),
+        getUserProfile(),
+        getSavedGuides(),
+      ]);
+
       setStats({
         scans: scanStats.totalScans,
         soilTypes: scanStats.uniqueSoilTypes,
         locations: scanStats.uniqueLocations,
       });
       setRecentScans(scanStats.recentScans || []);
+      setProfile(userProfile);
+      setSavedGuides(guides);
     } catch (error) {
-      console.error('Error loading stats:', error);
+      console.error('Error loading data:', error);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handlePickAvatar = async () => {
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (permissionResult.granted === false) {
+      Alert.alert('Permission Required', 'Please allow access to your photo library to set an avatar.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      const savedUri = await saveUserAvatar(result.assets[0].uri);
+      if (savedUri) {
+        setProfile(prev => ({ ...prev, avatarUri: savedUri }));
+        Alert.alert('Success', 'Avatar updated successfully!');
+      }
+    }
+  };
+
+  const handleEditProfile = () => {
+    setEditName(profile.name);
+    setEditEmail(profile.email);
+    setShowEditModal(true);
+  };
+
+  const handleSaveProfile = async () => {
+    await saveUserProfile({
+      name: editName.trim() || 'SoilScan User',
+      email: editEmail.trim(),
+    });
+    setProfile(prev => ({
+      ...prev,
+      name: editName.trim() || 'SoilScan User',
+      email: editEmail.trim(),
+    }));
+    setShowEditModal(false);
+    Alert.alert('Success', 'Profile updated successfully!');
   };
 
   const handleSettings = () => {
@@ -51,11 +123,23 @@ const ProfileScreen = ({ navigation }) => {
   };
 
   const handleSavedGuides = () => {
-    Alert.alert(
-      'Saved Guides',
-      'You have no saved guides yet. Bookmark helpful articles from the app to see them here.',
-      [{ text: 'OK' }]
-    );
+    if (savedGuides.length === 0) {
+      Alert.alert(
+        'Saved Guides',
+        'You have no saved guides yet. Bookmark helpful articles from the Guide screen to see them here.',
+        [{ text: 'OK' }]
+      );
+    } else {
+      setShowGuidesModal(true);
+    }
+  };
+
+  const handleRemoveGuide = async (guideId) => {
+    const updated = await removeGuide(guideId);
+    setSavedGuides(updated);
+    if (updated.length === 0) {
+      setShowGuidesModal(false);
+    }
   };
 
   const handleShareApp = async () => {
@@ -92,35 +176,31 @@ const ProfileScreen = ({ navigation }) => {
 
   const actionItems = [
     {
-      icon: 'cog',
       ionicon: 'settings-outline',
       title: 'Settings',
       desc: 'App preferences and notifications',
       onPress: handleSettings,
     },
     {
-      icon: 'bookmark',
       ionicon: 'bookmark-outline',
       title: 'Saved Guides',
-      desc: 'Your bookmarked articles',
+      desc: savedGuides.length > 0 ? `${savedGuides.length} saved` : 'Your bookmarked articles',
       onPress: handleSavedGuides,
+      badge: savedGuides.length > 0 ? savedGuides.length : null,
     },
     {
-      icon: 'share-alt',
       ionicon: 'share-social-outline',
       title: 'Share App',
       desc: 'Invite friends to SoilScan',
       onPress: handleShareApp,
     },
     {
-      icon: 'question-circle',
       ionicon: 'help-circle-outline',
       title: 'Help & Support',
       desc: 'FAQs and contact us',
       onPress: handleHelpSupport,
     },
     {
-      icon: 'sign-out-alt',
       ionicon: 'log-out-outline',
       title: 'Sign Out',
       desc: '',
@@ -129,10 +209,8 @@ const ProfileScreen = ({ navigation }) => {
     },
   ];
 
-  // Helper function to format timestamps
   const formatTimestamp = (timestamp) => {
     if (!timestamp) return 'Unknown time';
-
     const date = new Date(timestamp);
     const now = new Date();
     const diffMs = now - date;
@@ -152,7 +230,6 @@ const ProfileScreen = ({ navigation }) => {
     }
     if (diffDays === 1) return 'Yesterday';
     if (diffDays < 7) return `${diffDays} days ago`;
-
     return date.toLocaleDateString();
   };
 
@@ -161,12 +238,23 @@ const ProfileScreen = ({ navigation }) => {
       {/* Profile Header */}
       <View style={styles.section}>
         <View style={styles.profileHeader}>
-          <View style={styles.avatar}>
-            <Ionicons name="person" size={40} color="#5D9C59" />
-          </View>
-          <Text style={styles.profileName}>Alex Gardner</Text>
-          <Text style={styles.profileEmail}>alex.gardner@example.com</Text>
-          <TouchableOpacity style={styles.editProfileButton}>
+          <TouchableOpacity onPress={handlePickAvatar} style={styles.avatarContainer}>
+            {profile.avatarUri ? (
+              <Image source={{ uri: profile.avatarUri }} style={styles.avatarImage} />
+            ) : (
+              <View style={styles.avatar}>
+                <Ionicons name="person" size={40} color="#5D9C59" />
+              </View>
+            )}
+            <View style={styles.avatarBadge}>
+              <Ionicons name="camera" size={14} color="#fff" />
+            </View>
+          </TouchableOpacity>
+          <Text style={styles.profileName}>{profile.name}</Text>
+          {profile.email ? (
+            <Text style={styles.profileEmail}>{profile.email}</Text>
+          ) : null}
+          <TouchableOpacity style={styles.editProfileButton} onPress={handleEditProfile}>
             <Ionicons name="pencil" size={14} color="#5D9C59" />
             <Text style={styles.editProfileText}>Edit Profile</Text>
           </TouchableOpacity>
@@ -181,12 +269,10 @@ const ProfileScreen = ({ navigation }) => {
                 <Text style={styles.statValue}>{stats.scans}</Text>
                 <Text style={styles.statLabel}>Scans</Text>
               </View>
-
               <View style={styles.statCard}>
                 <Text style={styles.statValue}>{stats.soilTypes}</Text>
                 <Text style={styles.statLabel}>Soil Types</Text>
               </View>
-
               <View style={styles.statCard}>
                 <Text style={styles.statValue}>{stats.locations}</Text>
                 <Text style={styles.statLabel}>Locations</Text>
@@ -255,6 +341,11 @@ const ProfileScreen = ({ navigation }) => {
                 <Text style={styles.actionDesc}>{item.desc}</Text>
               ) : null}
             </View>
+            {item.badge ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{item.badge}</Text>
+              </View>
+            ) : null}
             {item.desc ? (
               <Ionicons name="chevron-forward" size={18} color="#999" />
             ) : null}
@@ -266,6 +357,94 @@ const ProfileScreen = ({ navigation }) => {
       <View style={styles.versionContainer}>
         <Text style={styles.versionText}>SoilScan v1.0.0</Text>
       </View>
+
+      {/* Edit Profile Modal */}
+      <Modal
+        visible={showEditModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowEditModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit Profile</Text>
+              <TouchableOpacity onPress={() => setShowEditModal(false)}>
+                <Ionicons name="close" size={24} color="#1A3C40" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Name</Text>
+              <TextInput
+                style={styles.input}
+                value={editName}
+                onChangeText={setEditName}
+                placeholder="Enter your name"
+                placeholderTextColor="#999"
+              />
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Email</Text>
+              <TextInput
+                style={styles.input}
+                value={editEmail}
+                onChangeText={setEditEmail}
+                placeholder="Enter your email"
+                placeholderTextColor="#999"
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+            </View>
+
+            <TouchableOpacity style={styles.saveButton} onPress={handleSaveProfile}>
+              <Text style={styles.saveButtonText}>Save Changes</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Saved Guides Modal */}
+      <Modal
+        visible={showGuidesModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowGuidesModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '70%' }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Saved Guides</Text>
+              <TouchableOpacity onPress={() => setShowGuidesModal(false)}>
+                <Ionicons name="close" size={24} color="#1A3C40" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.guidesList}>
+              {savedGuides.map((guide) => (
+                <View key={guide.id} style={styles.guideItem}>
+                  <View style={styles.guideIcon}>
+                    <Ionicons name="document-text" size={20} color="#5D9C59" />
+                  </View>
+                  <View style={styles.guideContent}>
+                    <Text style={styles.guideTitle}>{guide.title}</Text>
+                    <Text style={styles.guideDate}>
+                      Saved {formatTimestamp(guide.savedAt)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => handleRemoveGuide(guide.id)}
+                    style={styles.removeButton}
+                  >
+                    <Ionicons name="trash-outline" size={20} color="#DF2E38" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 };
@@ -299,6 +478,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 24,
   },
+  avatarContainer: {
+    position: 'relative',
+    marginBottom: 16,
+  },
   avatar: {
     width: 100,
     height: 100,
@@ -306,7 +489,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#C7E8CA',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+  },
+  avatarImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+  },
+  avatarBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    backgroundColor: '#5D9C59',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#fff',
   },
   profileName: {
     fontSize: 22,
@@ -420,6 +620,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6C757D',
   },
+  badge: {
+    backgroundColor: '#5D9C59',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginRight: 8,
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
   versionContainer: {
     alignItems: 'center',
     paddingVertical: 20,
@@ -443,6 +655,96 @@ const styles = StyleSheet.create({
     color: '#BBB',
     marginTop: 4,
     textAlign: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1A3C40',
+  },
+  inputContainer: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1A3C40',
+    marginBottom: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: '#1A3C40',
+  },
+  saveButton: {
+    backgroundColor: '#5D9C59',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  guidesList: {
+    maxHeight: 400,
+  },
+  guideItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  guideIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(93,156,89,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  guideContent: {
+    flex: 1,
+  },
+  guideTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1A3C40',
+    marginBottom: 2,
+  },
+  guideDate: {
+    fontSize: 12,
+    color: '#999',
+  },
+  removeButton: {
+    padding: 8,
   },
 });
 
