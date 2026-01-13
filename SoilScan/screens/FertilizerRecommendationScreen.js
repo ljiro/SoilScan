@@ -10,11 +10,16 @@ import {
   Animated,
   FlatList,
   Dimensions,
-  Alert
+  Alert,
+  Switch
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Location from 'expo-location';
 import { NPKChart, StepIndicator, SuccessAnimation, Confetti } from '../components';
+
+// Weather API
+const WEATHER_API_KEY = 'bd5e378503939ddaee76f12ad7a97608';
 
 const { width } = Dimensions.get('window');
 
@@ -173,9 +178,70 @@ const FertilizerRecommendationScreen = ({ route }) => {
   const [selectedTexture, setSelectedTexture] = useState(routeParams.soilType || null);
   const [selectedCrop, setSelectedCrop] = useState(null);
 
+  // Auto environmental data
+  const [autoEnvironment, setAutoEnvironment] = useState(!routeParams.temperature);
+  const [isLoadingWeather, setIsLoadingWeather] = useState(false);
+  const [locationName, setLocationName] = useState(null);
+
+  // Fetch weather data based on current location
+  const fetchWeatherData = async () => {
+    setIsLoadingWeather(true);
+    try {
+      // Request location permission
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location permission is needed for auto weather data.');
+        setAutoEnvironment(false);
+        return;
+      }
+
+      // Get current location
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      const { latitude, longitude } = location.coords;
+
+      // Fetch weather data
+      const response = await fetch(
+        `https://api.openweathermap.org/data/2.5/weather?lat=${latitude}&lon=${longitude}&units=metric&appid=${WEATHER_API_KEY}`
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+
+        // Update form with weather data
+        setFormData(prev => ({
+          ...prev,
+          temperature: Math.round(data.main.temp).toString(),
+          humidity: Math.round(data.main.humidity).toString(),
+          moisture: prev.moisture || Math.round(data.main.humidity * 0.6).toString(), // Estimate soil moisture
+        }));
+
+        setLocationName(data.name);
+      }
+    } catch (err) {
+      console.error('Weather fetch error:', err);
+      Alert.alert('Error', 'Could not fetch weather data. Please enter manually.');
+      setAutoEnvironment(false);
+    } finally {
+      setIsLoadingWeather(false);
+    }
+  };
+
+  // Toggle auto environment
+  const handleAutoToggle = (value) => {
+    setAutoEnvironment(value);
+    if (value) {
+      fetchWeatherData();
+    } else {
+      setLocationName(null);
+    }
+  };
+
   useEffect(() => {
     console.log('Form data after initialization:', formData);
-    
+
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -189,6 +255,11 @@ const FertilizerRecommendationScreen = ({ route }) => {
         useNativeDriver: true
       })
     ]).start();
+
+    // Auto-fetch weather if no data provided and autoEnvironment is true
+    if (autoEnvironment && !routeParams.temperature) {
+      fetchWeatherData();
+    }
   }, []);
 
   // Update form data when route params change
@@ -550,48 +621,96 @@ const FertilizerRecommendationScreen = ({ route }) => {
               <View style={styles.sectionHeader}>
                 <Ionicons name="cloud" size={18} color="#5D9C59" style={styles.sectionIcon} />
                 <Text style={styles.sectionTitle}>Environmental Conditions</Text>
-                {routeParams.temperature && (
-                  <View style={styles.autoFilledBadge}>
-                    <Text style={styles.autoFilledText}>Auto-filled</Text>
-                  </View>
-                )}
               </View>
-              <Text style={styles.sectionDescription}>Your local conditions</Text>
-              
+
+              {/* Auto/Manual Toggle */}
+              <View style={styles.autoToggleContainer}>
+                <View style={styles.autoToggleLeft}>
+                  <Ionicons
+                    name={autoEnvironment ? "location" : "create-outline"}
+                    size={18}
+                    color={autoEnvironment ? "#5D9C59" : "#6C757D"}
+                  />
+                  <Text style={styles.autoToggleText}>
+                    {autoEnvironment ? 'Auto-detect from GPS' : 'Manual entry'}
+                  </Text>
+                  {isLoadingWeather && (
+                    <ActivityIndicator size="small" color="#5D9C59" style={{ marginLeft: 8 }} />
+                  )}
+                </View>
+                <Switch
+                  value={autoEnvironment}
+                  onValueChange={handleAutoToggle}
+                  trackColor={{ false: '#E9ECEF', true: '#A8D5A2' }}
+                  thumbColor={autoEnvironment ? '#5D9C59' : '#f4f3f4'}
+                />
+              </View>
+
+              {/* Location info when auto */}
+              {autoEnvironment && locationName && (
+                <View style={styles.locationBanner}>
+                  <Ionicons name="location" size={14} color="#5D9C59" />
+                  <Text style={styles.locationText}>
+                    Data from: {locationName}
+                  </Text>
+                  <TouchableOpacity onPress={fetchWeatherData} style={styles.refreshButton}>
+                    <Ionicons name="refresh" size={14} color="#5D9C59" />
+                  </TouchableOpacity>
+                </View>
+              )}
+
               <View style={styles.inputRow}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Temperature</Text>
+                  <Text style={styles.inputLabel}>Temperature (°C)</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[styles.input, autoEnvironment && styles.inputAuto]}
                     keyboardType="numeric"
                     value={formData.temperature}
-                    onChangeText={(text) => handleInputChange('temperature', text)}
-                    placeholder="0.0"
+                    onChangeText={(text) => {
+                      handleInputChange('temperature', text);
+                      if (autoEnvironment) setAutoEnvironment(false);
+                    }}
+                    placeholder="--"
+                    placeholderTextColor="#BDBDBD"
                   />
                 </View>
-                
+
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Humidity</Text>
+                  <Text style={styles.inputLabel}>Humidity (%)</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[styles.input, autoEnvironment && styles.inputAuto]}
                     keyboardType="numeric"
                     value={formData.humidity}
-                    onChangeText={(text) => handleInputChange('humidity', text)}
-                    placeholder="0-100"
+                    onChangeText={(text) => {
+                      handleInputChange('humidity', text);
+                      if (autoEnvironment) setAutoEnvironment(false);
+                    }}
+                    placeholder="--"
+                    placeholderTextColor="#BDBDBD"
                   />
                 </View>
-                
+
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Moisture</Text>
+                  <Text style={styles.inputLabel}>Moisture (%)</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[styles.input, autoEnvironment && styles.inputAuto]}
                     keyboardType="numeric"
                     value={formData.moisture}
-                    onChangeText={(text) => handleInputChange('moisture', text)}
-                    placeholder="0-100"
+                    onChangeText={(text) => {
+                      handleInputChange('moisture', text);
+                      if (autoEnvironment) setAutoEnvironment(false);
+                    }}
+                    placeholder="--"
+                    placeholderTextColor="#BDBDBD"
                   />
                 </View>
               </View>
+
+              {autoEnvironment && (
+                <Text style={styles.autoHint}>
+                  Tap any field to switch to manual entry
+                </Text>
+              )}
             </View>
 
             {/* Action Buttons */}
@@ -797,6 +916,55 @@ const styles = StyleSheet.create({
     color: '#6C757D',
     marginBottom: 16,
     lineHeight: 20,
+  },
+  autoToggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FAFAFA',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  autoToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  autoToggleText: {
+    fontSize: 14,
+    color: '#1A3C40',
+    fontWeight: '500',
+    marginLeft: 10,
+  },
+  locationBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 16,
+  },
+  locationText: {
+    fontSize: 13,
+    color: '#2E7D32',
+    fontWeight: '500',
+    marginLeft: 8,
+    flex: 1,
+  },
+  refreshButton: {
+    padding: 4,
+  },
+  inputAuto: {
+    backgroundColor: '#E8F5E9',
+    borderColor: '#A8D5A2',
+  },
+  autoHint: {
+    fontSize: 12,
+    color: '#6C757D',
+    textAlign: 'center',
+    marginTop: 8,
+    fontStyle: 'italic',
   },
   textureContainer: {
     paddingBottom: 4,
