@@ -129,6 +129,33 @@ const ProfileScreen = ({ navigation }) => {
     },
   ];
 
+  // Helper function to format timestamps
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return 'Unknown time';
+
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins} min ago`;
+    if (diffHours < 24) {
+      const hours = date.getHours();
+      const mins = date.getMinutes();
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      const formattedHours = hours % 12 || 12;
+      const formattedMins = mins.toString().padStart(2, '0');
+      return `Today, ${formattedHours}:${formattedMins} ${ampm}`;
+    }
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays < 7) return `${diffDays} days ago`;
+
+    return date.toLocaleDateString();
+  };
+
   return (
     <ScrollView style={styles.container}>
       {/* Profile Header */}
@@ -175,36 +202,30 @@ const ProfileScreen = ({ navigation }) => {
           <Text style={styles.sectionTitle}>Recent Activity</Text>
         </View>
 
-        <View style={styles.activityItem}>
-          <View style={styles.activityIcon}>
-            <Ionicons name="scan" size={18} color="#5D9C59" />
+        {recentScans.length === 0 ? (
+          <View style={styles.emptyActivity}>
+            <Ionicons name="scan-outline" size={40} color="#CCC" />
+            <Text style={styles.emptyActivityText}>No scans yet</Text>
+            <Text style={styles.emptyActivitySubtext}>
+              Your soil scan history will appear here
+            </Text>
           </View>
-          <View style={styles.activityContent}>
-            <Text style={styles.activityTitle}>Loamy Soil Detected</Text>
-            <Text style={styles.activityTime}>Today, 2:30 PM</Text>
-          </View>
-          <Text style={styles.activityConfidence}>92%</Text>
-        </View>
-
-        <View style={styles.activityItem}>
-          <View style={styles.activityIcon}>
-            <Ionicons name="leaf" size={18} color="#FF6B35" />
-          </View>
-          <View style={styles.activityContent}>
-            <Text style={styles.activityTitle}>Fertilizer: NPK Recommended</Text>
-            <Text style={styles.activityTime}>Yesterday, 4:15 PM</Text>
-          </View>
-        </View>
-
-        <View style={styles.activityItem}>
-          <View style={[styles.activityIcon, { backgroundColor: '#E3F2FD' }]}>
-            <Ionicons name="location" size={18} color="#1976D2" />
-          </View>
-          <View style={styles.activityContent}>
-            <Text style={styles.activityTitle}>New Zone Created</Text>
-            <Text style={styles.activityTime}>2 days ago</Text>
-          </View>
-        </View>
+        ) : (
+          recentScans.map((scan, index) => (
+            <View key={scan.id || index} style={styles.activityItem}>
+              <View style={[styles.activityIcon, { backgroundColor: `${scan.color}20` || '#E8F5E9' }]}>
+                <Ionicons name="scan" size={18} color={scan.color || '#5D9C59'} />
+              </View>
+              <View style={styles.activityContent}>
+                <Text style={styles.activityTitle}>{scan.soilType} Soil Detected</Text>
+                <Text style={styles.activityTime}>{formatTimestamp(scan.timestamp)}</Text>
+              </View>
+              <Text style={styles.activityConfidence}>
+                {Math.round((scan.confidence || 0) * 100)}%
+              </Text>
+            </View>
+          ))
+        )}
       </View>
 
       {/* Actions */}
@@ -406,6 +427,22 @@ const styles = StyleSheet.create({
   versionText: {
     fontSize: 13,
     color: '#999',
+  },
+  emptyActivity: {
+    alignItems: 'center',
+    paddingVertical: 30,
+  },
+  emptyActivityText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#999',
+    marginTop: 12,
+  },
+  emptyActivitySubtext: {
+    fontSize: 13,
+    color: '#BBB',
+    marginTop: 4,
+    textAlign: 'center',
   },
 });
 
