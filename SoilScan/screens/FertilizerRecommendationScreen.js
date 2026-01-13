@@ -758,7 +758,14 @@ const FertilizerRecommendationScreen = ({ route }) => {
                   <Text style={styles.confidenceText}>AI Recommended</Text>
                 </View>
               </View>
-              
+
+              {/* NPK Chart Visualization */}
+              <NPKChart
+                nitrogen={parseFloat(formData.nitrogen) || 0}
+                phosphorus={parseFloat(formData.phosphorous) || 0}
+                potassium={parseFloat(formData.potassium) || 0}
+              />
+
               <View style={[styles.cropCard, styles.topCropCard]}>
                 <View style={styles.cropHeader}>
                   <View style={styles.cropIcon}>
@@ -766,20 +773,20 @@ const FertilizerRecommendationScreen = ({ route }) => {
                   </View>
                   <Text style={styles.cropName}>{recommendation.name}</Text>
                 </View>
-                
+
                 <View style={styles.infoRow}>
-                  <Ionicons name="information-circle" size={16} color="#6c757d" />
+                  <Ionicons name="information-circle" size={16} color="#6C757D" />
                   <Text style={styles.infoText}>{recommendation.description}</Text>
                 </View>
-                
+
                 <View style={styles.infoRow}>
-                  <Ionicons name="flask" size={16} color="#6c757d" />
+                  <Ionicons name="flask" size={16} color="#6C757D" />
                   <Text style={styles.infoText}>
                     <Text style={styles.infoLabel}>Composition: </Text>
                     {recommendation.composition}
                   </Text>
                 </View>
-                
+
                 <Text style={styles.sectionSubtitle}>Key Benefits:</Text>
                 {recommendation.benefits.map((benefit, index) => (
                   <View key={index} style={styles.benefitItem}>
@@ -787,10 +794,10 @@ const FertilizerRecommendationScreen = ({ route }) => {
                     <Text style={styles.benefitText}>{benefit}</Text>
                   </View>
                 ))}
-                
+
                 <Text style={styles.sectionSubtitle}>Application:</Text>
                 <View style={styles.infoRow}>
-                  <Ionicons name="calendar" size={16} color="#6c757d" />
+                  <Ionicons name="calendar" size={16} color="#6C757D" />
                   <Text style={styles.infoText}>{recommendation.application}</Text>
                 </View>
               </View>

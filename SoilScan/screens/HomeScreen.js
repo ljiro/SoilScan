@@ -17,7 +17,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as Location from 'expo-location';
 import { SuccessAnimation, Confetti, SkeletonResultCard } from '../components';
+import { savePhoto, addScanLog } from '../utils/storage';
 
 const API_ENDPOINT = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict_texture';
 
@@ -32,6 +34,7 @@ const HomeScreen = ({ navigation, route }) => {
   const [showLoadingModal, setShowLoadingModal] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
   const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
+  const [savedPhotoUri, setSavedPhotoUri] = useState(null);
 
   // Animation values
   const fadeAnim = useState(new Animated.Value(0))[0];
@@ -40,6 +43,14 @@ const HomeScreen = ({ navigation, route }) => {
   const buttonScale = useState(new Animated.Value(1))[0];
   const rotateAnim = useState(new Animated.Value(0))[0];
   const shakeAnim = useState(new Animated.Value(0))[0];
+
+  // Staggered results animations
+  const resultsTitleAnim = useState(new Animated.Value(0))[0];
+  const primaryCardAnim = useState(new Animated.Value(0))[0];
+  const primaryCardSlide = useState(new Animated.Value(50))[0];
+  const otherResultsAnim = useState(new Animated.Value(0))[0];
+  const otherResultsSlide = useState(new Animated.Value(50))[0];
+  const progressWidthAnim = useState(new Animated.Value(0))[0];
 
   // FAQ data
   const faqs = [
@@ -117,6 +128,60 @@ const HomeScreen = ({ navigation, route }) => {
     }
   }, [route.params?.capturedImageUri]);
 
+  // Trigger staggered results animations
+  const playResultsAnimation = () => {
+    // Reset animations
+    resultsTitleAnim.setValue(0);
+    primaryCardAnim.setValue(0);
+    primaryCardSlide.setValue(50);
+    otherResultsAnim.setValue(0);
+    otherResultsSlide.setValue(50);
+    progressWidthAnim.setValue(0);
+
+    // Staggered sequence
+    Animated.stagger(150, [
+      // Title fades in
+      Animated.timing(resultsTitleAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+      // Primary card slides up and fades in
+      Animated.parallel([
+        Animated.spring(primaryCardAnim, {
+          toValue: 1,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.spring(primaryCardSlide, {
+          toValue: 0,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+      ]),
+      // Progress bar fills
+      Animated.timing(progressWidthAnim, {
+        toValue: 1,
+        duration: 800,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: false,
+      }),
+      // Other results slide up
+      Animated.parallel([
+        Animated.timing(otherResultsAnim, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+        Animated.spring(otherResultsSlide, {
+          toValue: 0,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+  };
+
   const toggleFaq = (index) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setExpandedFaqIndex(expandedFaqIndex === index ? null : index);
@@ -142,11 +207,31 @@ const HomeScreen = ({ navigation, route }) => {
     outputRange: ['0deg', '180deg']
   });
 
+  // Helper function to get current location for scan logging
+  const getCurrentLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        return null;
+      }
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      return {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      };
+    } catch (error) {
+      console.log('Could not get location:', error);
+      return null;
+    }
+  };
+
   const uploadImageToAPI = async (fileUri) => {
     try {
       setShowLoadingModal(true);
       setIsAnalyzing(true);
-      
+
       // Loading animation
       Animated.loop(
         Animated.timing(rotateAnim, {
@@ -174,7 +259,7 @@ const HomeScreen = ({ navigation, route }) => {
       }
 
       const data = await response.json();
-      
+
       // Validate API response structure
       if (!data || !data.predicted_class || !data.confidence) {
         console.log('Invalid API response structure:', data);
@@ -190,6 +275,27 @@ const HomeScreen = ({ navigation, route }) => {
         color: data.color || '#FFFFFF',
         all_confidences: data.all_confidences || {}
       };
+
+      // Save photo to app-private storage
+      const savedUri = await savePhoto(fileUri);
+      setSavedPhotoUri(savedUri);
+
+      // Get current location for the log
+      const location = await getCurrentLocation();
+
+      // Log the scan to storage
+      await addScanLog({
+        soilType: formattedResult.name,
+        confidence: formattedResult.confidence / 100,
+        description: formattedResult.description,
+        properties: formattedResult.properties,
+        color: formattedResult.color,
+        photoUri: savedUri,
+        location: location,
+        allConfidences: formattedResult.all_confidences,
+      });
+
+      console.log('Scan saved successfully:', formattedResult.name);
 
       // Success animation
       Animated.parallel([
@@ -218,12 +324,17 @@ const HomeScreen = ({ navigation, route }) => {
       setShowSuccessAnimation(true);
       setShowConfetti(true);
 
-      // Hide confetti after 3 seconds
+      // Play staggered results animation after modal closes
+      setTimeout(() => {
+        playResultsAnimation();
+      }, 1500);
+
+      // Hide confetti after 2.5 seconds
       setTimeout(() => {
         setShowConfetti(false);
         setShowRecommendationPrompt(true);
       }, 2500);
-      
+
     } catch (error) {
       console.error('Upload error:', error);
       
@@ -415,18 +526,29 @@ const HomeScreen = ({ navigation, route }) => {
 
       {/* Results Section */}
       {selectedTexture && (
-        <Animated.View 
-          style={[
-            styles.resultsContainer, 
-            { opacity: fadeAnim }
-          ]}
-        >
-          <Text style={styles.resultsTitle}>Analysis Results</Text>
-          
-          <Animated.View 
+        <View style={styles.resultsContainer}>
+          <Animated.Text
+            style={[
+              styles.resultsTitle,
+              {
+                opacity: resultsTitleAnim,
+                transform: [{ translateY: resultsTitleAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-20, 0]
+                })}]
+              }
+            ]}
+          >
+            Analysis Results
+          </Animated.Text>
+
+          <Animated.View
             style={[
               styles.primaryResultCard,
-              { transform: [{ scale: cardScale }] }
+              {
+                opacity: primaryCardAnim,
+                transform: [{ translateY: primaryCardSlide }]
+              }
             ]}
           >
             <View style={styles.textureHeader}>
@@ -441,11 +563,14 @@ const HomeScreen = ({ navigation, route }) => {
 
             <View style={styles.progressContainer}>
               <View style={styles.progressBackground} />
-              <View
+              <Animated.View
                 style={[
                   styles.progressFill,
-                  { 
-                    width: `${selectedTexture.confidence}%`, 
+                  {
+                    width: progressWidthAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0%', `${selectedTexture.confidence}%`]
+                    }),
                     backgroundColor: selectedTexture.color,
                   },
                 ]}
@@ -456,9 +581,24 @@ const HomeScreen = ({ navigation, route }) => {
 
             <View style={styles.propertiesContainer}>
               {selectedTexture.properties?.map((prop, i) => (
-                <View key={i} style={[styles.propertyTag, { backgroundColor: `${selectedTexture.color}20` }]}>
+                <Animated.View
+                  key={i}
+                  style={[
+                    styles.propertyTag,
+                    { backgroundColor: `${selectedTexture.color}20` },
+                    {
+                      opacity: primaryCardAnim,
+                      transform: [{
+                        scale: primaryCardAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.8, 1]
+                        })
+                      }]
+                    }
+                  ]}
+                >
                   <Text style={[styles.propertyText, { color: selectedTexture.color }]}>{prop}</Text>
-                </View>
+                </Animated.View>
               ))}
             </View>
 
@@ -475,8 +615,15 @@ const HomeScreen = ({ navigation, route }) => {
           </Animated.View>
 
           {/* Other possible soil types */}
-          {renderOtherSoilTypes()}
-        </Animated.View>
+          <Animated.View
+            style={{
+              opacity: otherResultsAnim,
+              transform: [{ translateY: otherResultsSlide }]
+            }}
+          >
+            {renderOtherSoilTypes()}
+          </Animated.View>
+        </View>
       )}
 
       {/* FAQ Section */}

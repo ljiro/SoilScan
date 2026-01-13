@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
+import { getScanStats } from '../utils/storage';
 
 const ProfileScreen = ({ navigation }) => {
   const [stats, setStats] = useState({
@@ -17,21 +19,32 @@ const ProfileScreen = ({ navigation }) => {
     soilTypes: 0,
     locations: 0,
   });
+  const [recentScans, setRecentScans] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Simulate loading user stats
-  useEffect(() => {
+  // Load stats from storage when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      loadStats();
+    }, [])
+  );
+
+  const loadStats = async () => {
     setIsLoading(true);
-    // In a real app, this would fetch from storage/API
-    setTimeout(() => {
+    try {
+      const scanStats = await getScanStats();
       setStats({
-        scans: 24,
-        soilTypes: 5,
-        locations: 12,
+        scans: scanStats.totalScans,
+        soilTypes: scanStats.uniqueSoilTypes,
+        locations: scanStats.uniqueLocations,
       });
+      setRecentScans(scanStats.recentScans || []);
+    } catch (error) {
+      console.error('Error loading stats:', error);
+    } finally {
       setIsLoading(false);
-    }, 500);
-  }, []);
+    }
+  };
 
   const handleSettings = () => {
     navigation.navigate('Settings');
