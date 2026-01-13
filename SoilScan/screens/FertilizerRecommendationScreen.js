@@ -150,6 +150,20 @@ const FERTILIZER_INFO = {
 
 const API_URL = 'https://soilscanMLtraining-soilscan-api2.hf.space/predict_fertilizer';
 
+// Estimated NPK values based on soil type (general averages)
+const SOIL_NPK_ESTIMATES = {
+  'Alluvial': { nitrogen: '35', phosphorus: '20', potassium: '25' },
+  'Black': { nitrogen: '30', phosphorus: '18', potassium: '35' },
+  'Cinder': { nitrogen: '15', phosphorus: '10', potassium: '15' },
+  'Clay': { nitrogen: '25', phosphorus: '15', potassium: '30' },
+  'Laterite': { nitrogen: '20', phosphorus: '12', potassium: '18' },
+  'Loamy': { nitrogen: '40', phosphorus: '25', potassium: '35' },
+  'Peat': { nitrogen: '45', phosphorus: '15', potassium: '20' },
+  'Red': { nitrogen: '22', phosphorus: '14', potassium: '22' },
+  'Sandy': { nitrogen: '15', phosphorus: '10', potassium: '12' },
+  'Yellow': { nitrogen: '18', phosphorus: '12', potassium: '16' },
+};
+
 const FertilizerRecommendationScreen = ({ route }) => {
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -159,29 +173,41 @@ const FertilizerRecommendationScreen = ({ route }) => {
   // Get the passed parameters
   const routeParams = route.params || {};
   console.log('Route params received:', routeParams);
-  
+
+  // Get estimated NPK values if soilType is provided but NPK values are not
+  const getInitialNPK = () => {
+    const soilType = routeParams.soilType || routeParams.soilTexture;
+    if (soilType && SOIL_NPK_ESTIMATES[soilType]) {
+      return SOIL_NPK_ESTIMATES[soilType];
+    }
+    return { nitrogen: '', phosphorus: '', potassium: '' };
+  };
+  const initialNPK = getInitialNPK();
+
   // Initialize form data with route params
   const [formData, setFormData] = useState({
     temperature: routeParams.temperature || '',
     humidity: routeParams.humidity || '',
     moisture: routeParams.moisture || '',
-    soilType: routeParams.soilType || '',
+    soilType: routeParams.soilType || routeParams.soilTexture || '',
     cropType: '',
-    nitrogen: routeParams.nitrogen || '',
-    potassium: routeParams.potassium || '',
-    phosphorous: routeParams.phosphorous || ''
+    nitrogen: routeParams.nitrogen || initialNPK.nitrogen || '',
+    potassium: routeParams.potassium || initialNPK.potassium || '',
+    phosphorous: routeParams.phosphorous || initialNPK.phosphorus || ''
   });
   
   const [recommendation, setRecommendation] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [selectedTexture, setSelectedTexture] = useState(routeParams.soilType || null);
+  const [selectedTexture, setSelectedTexture] = useState(routeParams.soilType || routeParams.soilTexture || null);
   const [selectedCrop, setSelectedCrop] = useState(null);
 
   // Auto environmental data
   const [autoEnvironment, setAutoEnvironment] = useState(!routeParams.temperature);
   const [isLoadingWeather, setIsLoadingWeather] = useState(false);
   const [locationName, setLocationName] = useState(null);
+  const [lastWeatherUpdate, setLastWeatherUpdate] = useState(null);
+  const weatherIntervalRef = useRef(null);
 
   // Fetch weather data based on current location
   const fetchWeatherData = async () => {
@@ -224,6 +250,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
         }));
 
         setLocationName(data.name);
+        setLastWeatherUpdate(new Date());
       }
     } catch (err) {
       console.error('Weather fetch error:', err);
@@ -239,10 +266,29 @@ const FertilizerRecommendationScreen = ({ route }) => {
     setAutoEnvironment(value);
     if (value) {
       fetchWeatherData();
+      // Start periodic refresh every 60 seconds
+      weatherIntervalRef.current = setInterval(() => {
+        fetchWeatherData();
+      }, 60000);
     } else {
       setLocationName(null);
+      setLastWeatherUpdate(null);
+      // Clear the interval
+      if (weatherIntervalRef.current) {
+        clearInterval(weatherIntervalRef.current);
+        weatherIntervalRef.current = null;
+      }
     }
   };
+
+  // Cleanup interval on unmount
+  useEffect(() => {
+    return () => {
+      if (weatherIntervalRef.current) {
+        clearInterval(weatherIntervalRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     console.log('Form data after initialization:', formData);
@@ -264,6 +310,10 @@ const FertilizerRecommendationScreen = ({ route }) => {
     // Auto-fetch weather if no data provided and autoEnvironment is true
     if (autoEnvironment && !routeParams.temperature) {
       fetchWeatherData();
+      // Start periodic refresh every 60 seconds
+      weatherIntervalRef.current = setInterval(() => {
+        fetchWeatherData();
+      }, 60000);
     }
   }, []);
 
@@ -271,26 +321,37 @@ const FertilizerRecommendationScreen = ({ route }) => {
   useEffect(() => {
     if (routeParams && Object.keys(routeParams).length > 0) {
       console.log('Updating form data with route params:', routeParams);
+      const soilType = routeParams.soilType || routeParams.soilTexture;
+      const npkEstimate = soilType && SOIL_NPK_ESTIMATES[soilType] ? SOIL_NPK_ESTIMATES[soilType] : {};
+
       setFormData(prev => ({
         ...prev,
         temperature: routeParams.temperature || prev.temperature,
         humidity: routeParams.humidity || prev.humidity,
         moisture: routeParams.moisture || prev.moisture,
-        soilType: routeParams.soilType || prev.soilType,
-        nitrogen: routeParams.nitrogen || prev.nitrogen,
-        potassium: routeParams.potassium || prev.potassium,
-        phosphorous: routeParams.phosphorous || prev.phosphorous
+        soilType: soilType || prev.soilType,
+        nitrogen: routeParams.nitrogen || npkEstimate.nitrogen || prev.nitrogen,
+        potassium: routeParams.potassium || npkEstimate.potassium || prev.potassium,
+        phosphorous: routeParams.phosphorous || npkEstimate.phosphorus || prev.phosphorous
       }));
-      
-      if (routeParams.soilType) {
-        setSelectedTexture(routeParams.soilType);
+
+      if (soilType) {
+        setSelectedTexture(soilType);
       }
     }
   }, [routeParams]);
 
   const handleTextureSelect = (texture) => {
     setSelectedTexture(texture);
-    setFormData(prev => ({ ...prev, soilType: texture }));
+    const npkEstimate = SOIL_NPK_ESTIMATES[texture] || {};
+    setFormData(prev => ({
+      ...prev,
+      soilType: texture,
+      // Only auto-fill NPK if fields are empty
+      nitrogen: prev.nitrogen || npkEstimate.nitrogen || '',
+      potassium: prev.potassium || npkEstimate.potassium || '',
+      phosphorous: prev.phosphorous || npkEstimate.phosphorus || '',
+    }));
   };
 
   const handleCropSelect = (crop) => {
@@ -477,10 +538,10 @@ const FertilizerRecommendationScreen = ({ route }) => {
             <View>
               <Text style={styles.headerTitle}>Fertilizer Recommendation</Text>
               <Text style={styles.headerSubtitle}>
-                {routeParams.soilType ? `Pre-filled with soil analysis data` : 'Get personalized fertilizer suggestion'}
+                {(routeParams.soilType || routeParams.soilTexture) ? `Pre-filled with soil analysis data` : 'Get personalized fertilizer suggestion'}
               </Text>
             </View>
-            {routeParams.soilType && (
+            {(routeParams.soilType || routeParams.soilTexture) && (
               <View style={styles.detectedTag}>
                 <Ionicons name="leaf" size={14} color="#5D9C59" />
                 <Text style={styles.detectedText}>From Soil Scan</Text>
@@ -489,7 +550,7 @@ const FertilizerRecommendationScreen = ({ route }) => {
           </View>
 
           {/* Data Pre-filled Indicator */}
-          {routeParams.soilType && (
+          {(routeParams.soilType || routeParams.soilTexture) && (
             <View style={styles.prefilledBanner}>
               <Ionicons name="checkmark-circle" size={16} color="#fff" />
               <Text style={styles.prefilledText}>
@@ -655,9 +716,16 @@ const FertilizerRecommendationScreen = ({ route }) => {
               {autoEnvironment && locationName && (
                 <View style={styles.locationBanner}>
                   <Ionicons name="location" size={14} color="#5D9C59" />
-                  <Text style={styles.locationText}>
-                    Data from: {locationName}
-                  </Text>
+                  <View style={styles.locationTextContainer}>
+                    <Text style={styles.locationText}>
+                      Data from: {locationName}
+                    </Text>
+                    {lastWeatherUpdate && (
+                      <Text style={styles.lastUpdateText}>
+                        Updated: {lastWeatherUpdate.toLocaleTimeString()}
+                      </Text>
+                    )}
+                  </View>
                   <TouchableOpacity onPress={fetchWeatherData} style={styles.refreshButton}>
                     <Ionicons name="refresh" size={14} color="#5D9C59" />
                   </TouchableOpacity>
@@ -957,12 +1025,19 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 16,
   },
+  locationTextContainer: {
+    flex: 1,
+    marginLeft: 8,
+  },
   locationText: {
     fontSize: 13,
     color: '#2E7D32',
     fontWeight: '500',
-    marginLeft: 8,
-    flex: 1,
+  },
+  lastUpdateText: {
+    fontSize: 11,
+    color: '#66BB6A',
+    marginTop: 2,
   },
   refreshButton: {
     padding: 4,

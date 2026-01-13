@@ -9,7 +9,6 @@ import {
   Dimensions,
   Alert,
   ActivityIndicator,
-  Platform,
 } from "react-native";
 import MapView, { Marker, Polygon } from "react-native-maps";
 import * as Location from "expo-location";

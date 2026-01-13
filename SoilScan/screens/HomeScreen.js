@@ -394,8 +394,12 @@ const HomeScreen = ({ navigation, route }) => {
   const handleRecommendationResponse = (response) => {
     setShowRecommendationPrompt(false);
     if (response && selectedTexture) {
-      navigation.navigate('Fertilizer', { 
-        soilTexture: selectedTexture.name 
+      // Pass soil type and confidence for fertilizer recommendations
+      // NPK values will be estimated based on soil type or fetched from weather API
+      navigation.navigate('Fertilizer', {
+        soilType: selectedTexture.name,
+        soilTexture: selectedTexture.name,
+        confidence: selectedTexture.confidence,
       });
     }
   };
