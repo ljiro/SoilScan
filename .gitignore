@@ -35,5 +35,8 @@ test_output.png
 # Sample data (user-specific)
 SF-AgriCapture_*/
 
+# Cropped output data (user-specific)
+C-*/
+
 # Claude Code config
 .claude/

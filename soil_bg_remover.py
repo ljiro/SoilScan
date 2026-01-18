@@ -248,8 +248,8 @@ Examples:
     parser.add_argument(
         '-o', '--output',
         type=Path,
-        default=Path('output_cropped'),
-        help='Output directory for processed images (default: output_cropped)'
+        default=None,
+        help='Output directory for processed images (default: C-{input_folder_name})'
     )
 
     parser.add_argument(
@@ -279,6 +279,16 @@ Examples:
     if not args.input.exists():
         print(f"Error: Input directory '{args.input}' does not exist")
         sys.exit(1)
+
+    # Auto-generate output directory with C- prefix if not specified
+    if args.output is None:
+        input_name = args.input.resolve().name
+        # If input is a subdirectory like "images", use parent folder name
+        if input_name.lower() in ('images', 'image', 'photos', 'photo', 'pics'):
+            input_name = args.input.resolve().parent.name
+        # Add C- prefix for "Cropped"
+        output_name = f"C-{input_name}"
+        args.output = args.input.parent / output_name
 
     # Create output directory
     args.output.mkdir(parents=True, exist_ok=True)

@@ -26,6 +26,18 @@ A batch processing tool for removing backgrounds from soil sample images. Design
 
 The tool will automatically set up a Python virtual environment and install dependencies on first run.
 
+### Output Naming Convention
+
+Output folders are automatically named with a **`C-`** prefix (for "Cropped"):
+
+| Input Directory | Output Directory |
+|-----------------|------------------|
+| `SF-AgriCapture_20260117_1708` | `C-SF-AgriCapture_20260117_1708` |
+| `soil_samples_batch1` | `C-soil_samples_batch1` |
+| `field_data/images` | `C-field_data` |
+
+This makes it easy to identify which folders contain processed images.
+
 ### Command Line
 
 ```bash
