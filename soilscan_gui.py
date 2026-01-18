@@ -20,6 +20,8 @@ import queue
 import os
 import sys
 import zipfile
+from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
 
 # Check for rembg availability
 try:
@@ -36,13 +38,98 @@ except ImportError:
     PY7ZR_AVAILABLE = False
 
 
+# Global thread pool for background tasks
+_executor = ThreadPoolExecutor(max_workers=2)
+
+
+class ImageCache:
+    """LRU cache for loaded images to avoid repeated disk reads."""
+
+    def __init__(self, max_size=20):
+        self.max_size = max_size
+        self._cache = {}
+        self._order = []
+        self._lock = threading.Lock()
+
+    def get(self, path: Path, thumbnail_size: tuple = None):
+        """Get image from cache or load from disk."""
+        key = (str(path), thumbnail_size)
+
+        with self._lock:
+            if key in self._cache:
+                # Move to end (most recently used)
+                self._order.remove(key)
+                self._order.append(key)
+                return self._cache[key].copy()
+
+        # Load from disk (outside lock)
+        try:
+            img = Image.open(path)
+            if img.mode not in ('RGB', 'RGBA'):
+                img = img.convert('RGB')
+
+            if thumbnail_size:
+                img.thumbnail(thumbnail_size, Image.Resampling.BILINEAR)
+
+            with self._lock:
+                # Evict oldest if at capacity
+                while len(self._cache) >= self.max_size:
+                    old_key = self._order.pop(0)
+                    del self._cache[old_key]
+
+                self._cache[key] = img
+                self._order.append(key)
+
+            return img.copy()
+        except Exception as e:
+            print(f"Error loading image {path}: {e}")
+            return None
+
+    def clear(self):
+        """Clear the cache."""
+        with self._lock:
+            self._cache.clear()
+            self._order.clear()
+
+
+# Global image cache
+_image_cache = ImageCache(max_size=30)
+
+
+def create_checkerboard(size, check_size=10):
+    """Create a checkerboard pattern image (cached)."""
+    checker = Image.new('RGB', size, '#3c3c3c')
+    draw = ImageDraw.Draw(checker)
+    for y in range(0, size[1], check_size):
+        for x in range(0, size[0], check_size):
+            if (x // check_size + y // check_size) % 2 == 0:
+                draw.rectangle([x, y, x + check_size, y + check_size], fill='#2c2c2c')
+    return checker
+
+
+# Pre-generate common checkerboard sizes
+_checkerboard_cache = {}
+
+
+def get_checkerboard(size, check_size=10):
+    """Get or create a checkerboard pattern."""
+    # Round to nearest 100 to improve cache hits
+    rounded_size = ((size[0] // 100 + 1) * 100, (size[1] // 100 + 1) * 100)
+    key = (rounded_size, check_size)
+
+    if key not in _checkerboard_cache:
+        _checkerboard_cache[key] = create_checkerboard(rounded_size, check_size)
+
+    return _checkerboard_cache[key].crop((0, 0, size[0], size[1]))
+
+
 class ImageItem:
     """Represents an image in the processing queue."""
     def __init__(self, input_path: Path, output_path: Path, original_path: Path = None):
-        self.input_path = input_path  # Where to read for processing
-        self.output_path = output_path  # Where to save results
-        self.original_path = original_path or input_path  # Original source for manual crop
-        self.status = "pending"  # pending, processing, auto_cropped, manual_cropped, error
+        self.input_path = input_path
+        self.output_path = output_path
+        self.original_path = original_path or input_path
+        self.status = "pending"
         self.error_message = None
 
     @property
@@ -59,43 +146,80 @@ class ImageItem:
 
 
 class ManualCropCanvas(tk.Canvas):
-    """Canvas for manual crop selection."""
+    """Canvas for manual crop selection with optimized loading."""
 
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
-        self.image = None
         self.photo = None
         self.original_image = None
+        self.display_image = None
         self.scale = 1.0
         self.offset_x = 0
         self.offset_y = 0
+        self._image_path = None
+        self._loading = False
 
         # Selection rectangle
         self.start_x = None
         self.start_y = None
         self.rect_id = None
-        self.selection = None  # (x1, y1, x2, y2) in original image coordinates
+        self.selection = None
 
         # Bind mouse events
         self.bind("<ButtonPress-1>", self.on_press)
         self.bind("<B1-Motion>", self.on_drag)
         self.bind("<ButtonRelease-1>", self.on_release)
+        self.bind("<Configure>", self._on_resize)
 
         self.configure(bg="#2b2b2b", highlightthickness=0)
 
+    def _on_resize(self, event):
+        """Handle canvas resize."""
+        if self.original_image and not self._loading:
+            self.after_idle(self._fit_image)
+
     def load_image(self, image_path: Path):
-        """Load and display an image."""
-        try:
-            self.original_image = Image.open(image_path)
-            if self.original_image.mode not in ('RGB', 'RGBA'):
-                self.original_image = self.original_image.convert('RGB')
-            self._fit_image()
-            self.selection = None
-            if self.rect_id:
-                self.delete(self.rect_id)
-                self.rect_id = None
-        except Exception as e:
-            print(f"Error loading image: {e}")
+        """Load and display an image asynchronously."""
+        if self._loading:
+            return
+
+        self._image_path = image_path
+        self._loading = True
+        self.selection = None
+
+        if self.rect_id:
+            self.delete(self.rect_id)
+            self.rect_id = None
+
+        # Show loading indicator
+        self.delete("all")
+        self.create_text(
+            self.winfo_width() // 2, self.winfo_height() // 2,
+            text="Loading...", fill="#888888", font=("Segoe UI", 10)
+        )
+
+        # Load in background thread
+        def load():
+            try:
+                img = Image.open(image_path)
+                if img.mode not in ('RGB', 'RGBA'):
+                    img = img.convert('RGB')
+                return img
+            except Exception as e:
+                print(f"Error loading image: {e}")
+                return None
+
+        def on_loaded(future):
+            try:
+                img = future.result()
+                if img and self._image_path == image_path:
+                    self.original_image = img
+                    self.after_idle(self._fit_image)
+            finally:
+                self._loading = False
+
+        future = _executor.submit(load)
+        future.add_done_callback(lambda f: self.after(0, lambda: on_loaded(f)))
 
     def _fit_image(self):
         """Fit image to canvas size."""
@@ -106,40 +230,36 @@ class ManualCropCanvas(tk.Canvas):
         canvas_height = self.winfo_height()
 
         if canvas_width <= 1 or canvas_height <= 1:
-            self.after(100, self._fit_image)
+            self.after(50, self._fit_image)
             return
 
         img_width, img_height = self.original_image.size
 
-        # Calculate scale to fit
         scale_x = canvas_width / img_width
         scale_y = canvas_height / img_height
-        self.scale = min(scale_x, scale_y) * 0.95  # 95% to leave margin
+        self.scale = min(scale_x, scale_y) * 0.95
 
-        # Calculate display size
         display_width = int(img_width * self.scale)
         display_height = int(img_height * self.scale)
 
-        # Calculate offset to center
         self.offset_x = (canvas_width - display_width) // 2
         self.offset_y = (canvas_height - display_height) // 2
 
-        # Resize and display
-        display_image = self.original_image.copy()
+        # Use BILINEAR for faster preview (LANCZOS only for final output)
+        display_image = self.original_image
         if display_image.mode == 'RGBA':
             display_image = display_image.convert('RGB')
+
         display_image = display_image.resize(
             (display_width, display_height),
-            Image.Resampling.LANCZOS
+            Image.Resampling.BILINEAR
         )
         self.photo = ImageTk.PhotoImage(display_image)
 
         self.delete("all")
         self.create_image(
             self.offset_x, self.offset_y,
-            anchor=tk.NW,
-            image=self.photo,
-            tags="image"
+            anchor=tk.NW, image=self.photo, tags="image"
         )
 
     def canvas_to_image(self, cx, cy):
@@ -150,7 +270,6 @@ class ManualCropCanvas(tk.Canvas):
         ix = int((cx - self.offset_x) / self.scale)
         iy = int((cy - self.offset_y) / self.scale)
 
-        # Clamp to image bounds
         img_width, img_height = self.original_image.size
         ix = max(0, min(ix, img_width))
         iy = max(0, min(iy, img_height))
@@ -180,17 +299,14 @@ class ManualCropCanvas(tk.Canvas):
         if self.original_image is None:
             return
 
-        # Convert to image coordinates
         x1, y1 = self.canvas_to_image(self.start_x, self.start_y)
         x2, y2 = self.canvas_to_image(event.x, event.y)
 
-        # Ensure proper order
         if x1 > x2:
             x1, x2 = x2, x1
         if y1 > y2:
             y1, y2 = y2, y1
 
-        # Minimum selection size
         if x2 - x1 > 10 and y2 - y1 > 10:
             self.selection = (x1, y1, x2, y2)
         else:
@@ -206,18 +322,13 @@ class ManualCropCanvas(tk.Canvas):
 
         x1, y1, x2, y2 = self.selection
 
-        # Get base image (convert RGBA to RGB for cropping source)
         base_image = self.original_image
         if base_image.mode == 'RGBA':
             base_image = base_image.convert('RGB')
 
         cropped = base_image.crop((x1, y1, x2, y2))
 
-        # Create transparent background version
-        # The cropped area becomes the foreground on transparent background
         result = Image.new('RGBA', base_image.size, (0, 0, 0, 0))
-
-        # Paste the cropped region at its original position
         cropped_rgba = cropped.convert('RGBA')
         result.paste(cropped_rgba, (x1, y1))
 
@@ -230,16 +341,18 @@ class ManualCropCanvas(tk.Canvas):
         self.photo = None
         self.selection = None
         self.rect_id = None
+        self._image_path = None
 
 
 class PreviewPanel(tk.Frame):
-    """Panel for displaying image preview."""
+    """Panel for displaying image preview with optimized loading."""
 
     def __init__(self, parent, title="Preview", **kwargs):
         super().__init__(parent, **kwargs)
         self.configure(bg="#1e1e1e")
+        self._loading = False
+        self._pending_path = None
 
-        # Title
         self.title_label = tk.Label(
             self, text=title,
             bg="#1e1e1e", fg="#ffffff",
@@ -247,12 +360,18 @@ class PreviewPanel(tk.Frame):
         )
         self.title_label.pack(pady=(5, 0))
 
-        # Canvas for image
         self.canvas = tk.Canvas(self, bg="#2b2b2b", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.canvas.bind("<Configure>", self._on_resize)
 
         self.photo = None
         self.original_image = None
+        self._current_path = None
+
+    def _on_resize(self, event):
+        """Handle resize."""
+        if self.original_image and not self._loading:
+            self.after_idle(self._fit_image)
 
     def set_title(self, title):
         """Update the panel title."""
@@ -260,22 +379,47 @@ class PreviewPanel(tk.Frame):
 
     def load_image(self, image_path: Path = None, pil_image: Image.Image = None):
         """Load and display an image from path or PIL Image."""
-        try:
-            if image_path:
-                self.original_image = Image.open(image_path)
-            elif pil_image:
-                self.original_image = pil_image
-            else:
-                self.clear()
-                return
+        if image_path:
+            self._current_path = image_path
+            self._pending_path = image_path
 
+            # Show loading
+            self.canvas.delete("all")
+            self.canvas.create_text(
+                self.canvas.winfo_width() // 2,
+                self.canvas.winfo_height() // 2,
+                text="Loading...", fill="#888888", font=("Segoe UI", 10)
+            )
+
+            # Load async
+            def load():
+                try:
+                    return Image.open(image_path)
+                except Exception as e:
+                    print(f"Error loading preview: {e}")
+                    return None
+
+            def on_loaded(future):
+                try:
+                    img = future.result()
+                    if img and self._pending_path == image_path:
+                        self.original_image = img
+                        self.after_idle(self._fit_image)
+                except:
+                    pass
+
+            future = _executor.submit(load)
+            future.add_done_callback(lambda f: self.after(0, lambda: on_loaded(f)))
+
+        elif pil_image:
+            self.original_image = pil_image
+            self._current_path = None
             self._fit_image()
-        except Exception as e:
-            print(f"Error loading preview: {e}")
+        else:
             self.clear()
 
     def _fit_image(self):
-        """Fit image to canvas."""
+        """Fit image to canvas with optimized checkerboard."""
         if self.original_image is None:
             return
 
@@ -284,12 +428,11 @@ class PreviewPanel(tk.Frame):
         canvas_height = self.canvas.winfo_height()
 
         if canvas_width <= 1 or canvas_height <= 1:
-            self.after(100, self._fit_image)
+            self.after(50, self._fit_image)
             return
 
         img_width, img_height = self.original_image.size
 
-        # Calculate scale
         scale_x = canvas_width / img_width
         scale_y = canvas_height / img_height
         scale = min(scale_x, scale_y) * 0.95
@@ -297,36 +440,28 @@ class PreviewPanel(tk.Frame):
         display_width = int(img_width * scale)
         display_height = int(img_height * scale)
 
-        # Handle RGBA for display (add checkerboard background)
+        # Handle RGBA with optimized checkerboard
         if self.original_image.mode == 'RGBA':
-            # Create checkerboard background
-            checker = Image.new('RGB', self.original_image.size, '#3c3c3c')
-            checker_draw = ImageDraw.Draw(checker)
-            check_size = 10
-            for y in range(0, self.original_image.height, check_size):
-                for x in range(0, self.original_image.width, check_size):
-                    if (x // check_size + y // check_size) % 2 == 0:
-                        checker_draw.rectangle(
-                            [x, y, x + check_size, y + check_size],
-                            fill='#2c2c2c'
-                        )
-            checker.paste(self.original_image, mask=self.original_image.split()[3])
+            # Resize first, then apply checkerboard (much faster)
+            resized = self.original_image.resize(
+                (display_width, display_height),
+                Image.Resampling.BILINEAR
+            )
+            checker = get_checkerboard((display_width, display_height))
+            checker.paste(resized, mask=resized.split()[3])
             display_image = checker
         else:
-            display_image = self.original_image
-
-        display_image = display_image.resize(
-            (display_width, display_height),
-            Image.Resampling.LANCZOS
-        )
+            display_image = self.original_image.resize(
+                (display_width, display_height),
+                Image.Resampling.BILINEAR
+            )
 
         self.photo = ImageTk.PhotoImage(display_image)
 
         self.canvas.delete("all")
         self.canvas.create_image(
             canvas_width // 2, canvas_height // 2,
-            anchor=tk.CENTER,
-            image=self.photo
+            anchor=tk.CENTER, image=self.photo
         )
 
     def clear(self):
@@ -334,6 +469,7 @@ class PreviewPanel(tk.Frame):
         self.canvas.delete("all")
         self.photo = None
         self.original_image = None
+        self._current_path = None
 
 
 class SoilScanApp:
@@ -359,7 +495,7 @@ class SoilScanApp:
         # Data
         self.input_dir = None
         self.output_dir = None
-        self.original_dir = None  # For correction mode
+        self.original_dir = None
         self.images: list[ImageItem] = []
         self.current_index = -1
         self.processing = False
@@ -383,7 +519,6 @@ class SoilScanApp:
         style = ttk.Style()
         style.theme_use('clam')
 
-        # Configure colors
         style.configure(".",
             background=self.bg_color,
             foreground=self.fg_color,
@@ -404,7 +539,6 @@ class SoilScanApp:
             troughcolor=self.list_bg
         )
 
-        # Treeview style
         style.configure("Treeview",
             background=self.list_bg,
             foreground=self.fg_color,
@@ -422,30 +556,18 @@ class SoilScanApp:
 
     def _build_ui(self):
         """Build the main UI."""
-        # Main container
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Mode indicator banner
         self._build_mode_banner(main_frame)
-
-        # Top bar with directory selection
         self._build_top_bar(main_frame)
 
-        # Content area
         content_frame = ttk.Frame(main_frame)
         content_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
 
-        # Left panel - Image list
         self._build_image_list(content_frame)
-
-        # Center panel - Previews
         self._build_preview_area(content_frame)
-
-        # Right panel - Controls
         self._build_control_panel(content_frame)
-
-        # Bottom bar - Status and progress
         self._build_status_bar(main_frame)
 
     def _build_mode_banner(self, parent):
@@ -456,7 +578,7 @@ class SoilScanApp:
 
         self.mode_label = tk.Label(
             self.mode_frame,
-            text="📁 NORMAL MODE - Select an input directory to process images",
+            text="NORMAL MODE - Select an input directory to process images",
             bg=self.accent_color, fg="#ffffff",
             font=("Segoe UI", 10, "bold")
         )
@@ -468,13 +590,13 @@ class SoilScanApp:
             self.mode_frame.configure(bg=self.warning_color)
             self.mode_label.configure(
                 bg=self.warning_color,
-                text="🔧 CORRECTION MODE - Manual cropping from original images"
+                text="CORRECTION MODE - Manual cropping from original images"
             )
         else:
             self.mode_frame.configure(bg=self.accent_color)
             self.mode_label.configure(
                 bg=self.accent_color,
-                text="📁 NORMAL MODE - Auto-process images with AI background removal"
+                text="NORMAL MODE - Auto-process images with AI background removal"
             )
 
     def _build_top_bar(self, parent):
@@ -482,7 +604,6 @@ class SoilScanApp:
         top_frame = tk.Frame(parent, bg=self.panel_bg, padx=10, pady=10)
         top_frame.pack(fill=tk.X)
 
-        # Row 1: Directory selection
         row1 = tk.Frame(top_frame, bg=self.panel_bg)
         row1.pack(fill=tk.X)
 
@@ -506,7 +627,6 @@ class SoilScanApp:
             relief=tk.FLAT, padx=15
         ).pack(side=tk.LEFT, padx=(10, 0))
 
-        # Row 2: Info labels
         self.info_frame = tk.Frame(top_frame, bg=self.panel_bg)
         self.info_frame.pack(fill=tk.X, pady=(8, 0))
 
@@ -530,14 +650,12 @@ class SoilScanApp:
         list_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
         list_frame.pack_propagate(False)
 
-        # Header
         tk.Label(
             list_frame, text="Images",
             bg=self.panel_bg, fg=self.fg_color,
             font=("Segoe UI", 11, "bold")
         ).pack(pady=(10, 5))
 
-        # Filter frame
         filter_frame = tk.Frame(list_frame, bg=self.panel_bg)
         filter_frame.pack(fill=tk.X, padx=10)
 
@@ -553,7 +671,6 @@ class SoilScanApp:
                 activeforeground=self.fg_color
             ).pack(side=tk.LEFT, padx=2)
 
-        # Treeview with scrollbar
         tree_frame = tk.Frame(list_frame, bg=self.panel_bg)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -576,7 +693,6 @@ class SoilScanApp:
 
         self.tree.bind("<<TreeviewSelect>>", self._on_image_select)
 
-        # Image count label
         self.count_label = tk.Label(
             list_frame, text="0 images",
             bg=self.panel_bg, fg="#888888",
@@ -589,23 +705,18 @@ class SoilScanApp:
         preview_frame = tk.Frame(parent, bg=self.bg_color)
         preview_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
 
-        # Top row - Original and Result previews
         top_preview = tk.Frame(preview_frame, bg=self.bg_color)
         top_preview.pack(fill=tk.BOTH, expand=True)
 
-        # Original preview
         self.original_preview = PreviewPanel(top_preview, title="Original")
         self.original_preview.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
 
-        # Result preview
         self.result_preview = PreviewPanel(top_preview, title="Cropped Result")
         self.result_preview.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
 
-        # Manual crop section
         manual_frame = tk.Frame(preview_frame, bg=self.panel_bg)
         manual_frame.pack(fill=tk.X, pady=(10, 0))
 
-        # Manual crop header row 1
         header_frame = tk.Frame(manual_frame, bg=self.panel_bg)
         header_frame.pack(fill=tk.X, padx=10, pady=5)
 
@@ -626,7 +737,6 @@ class SoilScanApp:
         )
         self.apply_manual_btn.pack(side=tk.RIGHT)
 
-        # Source status row
         source_frame = tk.Frame(manual_frame, bg=self.panel_bg)
         source_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
 
@@ -647,7 +757,6 @@ class SoilScanApp:
         )
         self.browse_original_btn.pack(side=tk.RIGHT)
 
-        # Manual crop canvas
         self.manual_canvas = ManualCropCanvas(manual_frame, height=200)
         self.manual_canvas.pack(fill=tk.X, padx=10, pady=(0, 10))
 
@@ -663,7 +772,6 @@ class SoilScanApp:
             font=("Segoe UI", 11, "bold")
         ).pack(pady=(10, 20))
 
-        # Process All button
         self.process_all_btn = tk.Button(
             control_frame, text="Process All Images",
             command=self._process_all,
@@ -674,7 +782,6 @@ class SoilScanApp:
         )
         self.process_all_btn.pack(pady=5)
 
-        # Process Selected button (AI)
         self.process_selected_btn = tk.Button(
             control_frame, text="AI Crop Selected",
             command=self._process_selected,
@@ -685,7 +792,6 @@ class SoilScanApp:
         )
         self.process_selected_btn.pack(pady=5)
 
-        # Manual Crop Selected button (no AI)
         self.manual_crop_btn = tk.Button(
             control_frame, text="Manual Crop Selected",
             command=self._apply_manual_crop,
@@ -696,7 +802,6 @@ class SoilScanApp:
         )
         self.manual_crop_btn.pack(pady=5)
 
-        # Hint label
         self.crop_hint_label = tk.Label(
             control_frame,
             text="Draw selection below first,\nthen click Manual Crop",
@@ -705,10 +810,8 @@ class SoilScanApp:
         )
         self.crop_hint_label.pack(pady=(0, 5))
 
-        # Separator
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15, padx=10)
 
-        # Navigation
         tk.Label(
             control_frame, text="Navigation",
             bg=self.panel_bg, fg="#888888",
@@ -719,7 +822,7 @@ class SoilScanApp:
         nav_frame.pack(pady=10)
 
         self.prev_btn = tk.Button(
-            nav_frame, text="◀ Prev",
+            nav_frame, text="< Prev",
             command=self._prev_image,
             bg="#555555", fg="#ffffff",
             relief=tk.FLAT, padx=15,
@@ -728,7 +831,7 @@ class SoilScanApp:
         self.prev_btn.pack(side=tk.LEFT, padx=5)
 
         self.next_btn = tk.Button(
-            nav_frame, text="Next ▶",
+            nav_frame, text="Next >",
             command=self._next_image,
             bg="#555555", fg="#ffffff",
             relief=tk.FLAT, padx=15,
@@ -736,10 +839,8 @@ class SoilScanApp:
         )
         self.next_btn.pack(side=tk.LEFT, padx=5)
 
-        # Separator
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=20, padx=10)
 
-        # Options
         tk.Label(
             control_frame, text="Options",
             bg=self.panel_bg, fg="#888888",
@@ -755,10 +856,8 @@ class SoilScanApp:
             activeforeground=self.fg_color
         ).pack(pady=10)
 
-        # Separator
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=20, padx=10)
 
-        # Open folders
         self.open_input_btn = tk.Button(
             control_frame, text="Open Input Folder",
             command=self._open_input_folder,
@@ -785,7 +884,6 @@ class SoilScanApp:
         status_frame.pack(fill=tk.X, pady=(10, 0))
         status_frame.pack_propagate(False)
 
-        # Status label
         self.status_label = tk.Label(
             status_frame, text="Ready - Select a directory to begin",
             bg=self.panel_bg, fg=self.fg_color,
@@ -794,13 +892,11 @@ class SoilScanApp:
         )
         self.status_label.pack(side=tk.LEFT, padx=10, pady=10)
 
-        # Progress bar
         self.progress = ttk.Progressbar(
             status_frame, mode='determinate', length=300
         )
         self.progress.pack(side=tk.RIGHT, padx=10, pady=10)
 
-        # Progress label
         self.progress_label = tk.Label(
             status_frame, text="",
             bg=self.panel_bg, fg=self.fg_color,
@@ -820,8 +916,7 @@ class SoilScanApp:
         )
 
     def _browse_directory(self):
-        """Browse for directory or archive file - auto-detect mode based on name."""
-        # First, ask user what they want to open
+        """Browse for directory or archive file."""
         choice = messagebox.askquestion(
             "Select Input",
             "Do you want to open a folder?\n\n"
@@ -831,12 +926,10 @@ class SoilScanApp:
         )
 
         if choice == 'yes':
-            # Browse for directory
             directory = filedialog.askdirectory(title="Select Directory")
             if directory:
                 self._load_directory(Path(directory))
         else:
-            # Browse for archive file
             filetypes = [("Archive files", "*.7z *.zip"), ("7z files", "*.7z"), ("ZIP files", "*.zip")]
             archive_path = filedialog.askopenfilename(
                 title="Select Archive File",
@@ -849,7 +942,6 @@ class SoilScanApp:
         """Extract archive and load the extracted directory."""
         extract_dir = archive_path.parent / archive_path.stem
 
-        # Check if already extracted
         if extract_dir.exists():
             result = messagebox.askyesno(
                 "Folder Exists",
@@ -860,7 +952,6 @@ class SoilScanApp:
                 self._load_directory(extract_dir)
                 return
 
-        # Check archive type and extract
         suffix = archive_path.suffix.lower()
 
         if suffix == '.7z':
@@ -943,22 +1034,24 @@ class SoilScanApp:
 
     def _load_directory(self, directory: Path):
         """Load directory and detect mode based on C- prefix."""
+        self._update_status(f"Loading {directory.name}...")
+
+        # Clear cache when loading new directory
+        _image_cache.clear()
+
         dir_name = directory.name
 
         if dir_name.startswith("C-"):
-            # CORRECTION MODE: User selected a cropped output folder
             self.mode = "correction"
             self.output_dir = directory
 
-            # Find original folder (remove C- prefix)
-            original_name = dir_name[2:]  # Remove "C-"
+            original_name = dir_name[2:]
             potential_original = directory.parent / original_name
 
             if potential_original.exists():
                 self.original_dir = potential_original
-                self.input_dir = directory  # For listing cropped images
+                self.input_dir = directory
             else:
-                # Try to find original with images subfolder
                 potential_with_images = directory.parent / original_name / "images"
                 if potential_with_images.exists():
                     self.original_dir = potential_with_images
@@ -975,18 +1068,15 @@ class SoilScanApp:
             self.source_label.configure(text=f"Original: {self.original_dir}")
             self.output_label.configure(text=f"Output: {self.output_dir}")
 
-            # Update UI for correction mode
             self.process_all_btn.configure(state=tk.DISABLED)
             self.original_preview.set_title("Original (Source)")
             self.result_preview.set_title("Current Crop (Will be replaced)")
 
         else:
-            # NORMAL MODE: User selected a source folder
             self.mode = "normal"
             self.input_dir = directory
             self.original_dir = directory
 
-            # Auto-generate output directory with C- prefix
             input_name = directory.name
             if input_name.lower() in ('images', 'image', 'photos', 'photo', 'pics'):
                 input_name = directory.parent.name
@@ -998,93 +1088,99 @@ class SoilScanApp:
             self.source_label.configure(text=f"Input: {self.input_dir}")
             self.output_label.configure(text=f"Output: {self.output_dir}")
 
-            # Update UI for normal mode
             self.process_all_btn.configure(state=tk.NORMAL)
             self.original_preview.set_title("Original")
             self.result_preview.set_title("Cropped Result")
 
-        # Update entry and banner
         self.dir_entry.delete(0, tk.END)
         self.dir_entry.insert(0, str(directory))
         self._update_mode_banner()
 
-        # Load images
-        self._load_images()
+        # Load images in background
+        self._load_images_async()
 
-    def _load_images(self):
-        """Load images based on current mode."""
-        self.images.clear()
-        extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.webp')
+    def _load_images_async(self):
+        """Load images list asynchronously."""
+        self._update_status("Scanning for images...")
 
-        if self.mode == "correction":
-            # In correction mode, list cropped images and find originals
-            for ext in extensions:
-                for img_path in self.output_dir.rglob(f'*{ext}'):
-                    # Find corresponding original
-                    try:
-                        rel_path = img_path.relative_to(self.output_dir)
-                    except ValueError:
-                        rel_path = Path(img_path.name)
+        def scan():
+            images = []
+            extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.webp')
 
-                    # Original might be jpg while cropped is png
-                    original_path = None
-                    for orig_ext in extensions:
-                        potential = self.original_dir / rel_path.with_suffix(orig_ext)
-                        if potential.exists():
-                            original_path = potential
-                            break
+            if self.mode == "correction":
+                for ext in extensions:
+                    for img_path in self.output_dir.rglob(f'*{ext}'):
+                        try:
+                            rel_path = img_path.relative_to(self.output_dir)
+                        except ValueError:
+                            rel_path = Path(img_path.name)
 
-                    if original_path is None:
-                        # Try without nested structure
+                        original_path = None
                         for orig_ext in extensions:
-                            potential = self.original_dir / rel_path.name
-                            potential = potential.with_suffix(orig_ext)
+                            potential = self.original_dir / rel_path.with_suffix(orig_ext)
                             if potential.exists():
                                 original_path = potential
                                 break
 
-                    item = ImageItem(
-                        input_path=img_path,
-                        output_path=img_path,
-                        original_path=original_path or img_path
-                    )
-                    item.status = "auto_cropped"
-                    self.images.append(item)
+                        if original_path is None:
+                            for orig_ext in extensions:
+                                potential = self.original_dir / rel_path.name
+                                potential = potential.with_suffix(orig_ext)
+                                if potential.exists():
+                                    original_path = potential
+                                    break
 
-        else:
-            # Normal mode - list source images
-            for ext in extensions:
-                for img_path in self.input_dir.rglob(f'*{ext}'):
-                    try:
-                        rel_path = img_path.relative_to(self.input_dir)
-                    except ValueError:
-                        rel_path = Path(img_path.name)
-
-                    output_path = self.output_dir / rel_path.with_suffix('.png')
-
-                    item = ImageItem(
-                        input_path=img_path,
-                        output_path=output_path,
-                        original_path=img_path
-                    )
-
-                    if output_path.exists():
+                        item = ImageItem(
+                            input_path=img_path,
+                            output_path=img_path,
+                            original_path=original_path or img_path
+                        )
                         item.status = "auto_cropped"
+                        images.append(item)
 
-                    self.images.append(item)
+            else:
+                for ext in extensions:
+                    for img_path in self.input_dir.rglob(f'*{ext}'):
+                        try:
+                            rel_path = img_path.relative_to(self.input_dir)
+                        except ValueError:
+                            rel_path = Path(img_path.name)
 
-        # Sort by name
-        self.images.sort(key=lambda x: x.name.lower())
+                        output_path = self.output_dir / rel_path.with_suffix('.png')
 
-        self._refresh_tree()
+                        item = ImageItem(
+                            input_path=img_path,
+                            output_path=output_path,
+                            original_path=img_path
+                        )
 
-        mode_text = "correction" if self.mode == "correction" else "processing"
-        self._update_status(f"Loaded {len(self.images)} images for {mode_text}")
+                        if output_path.exists():
+                            item.status = "auto_cropped"
 
-        # Enable controls
-        if self.images:
-            self.open_input_btn.configure(state=tk.NORMAL)
-            self.open_output_btn.configure(state=tk.NORMAL)
+                        images.append(item)
+
+            images.sort(key=lambda x: x.name.lower())
+            return images
+
+        def on_done(future):
+            try:
+                self.images = future.result()
+                self.after_idle_safe(self._refresh_tree)
+                mode_text = "correction" if self.mode == "correction" else "processing"
+                self._update_status(f"Loaded {len(self.images)} images for {mode_text}")
+
+                if self.images:
+                    self.open_input_btn.configure(state=tk.NORMAL)
+                    self.open_output_btn.configure(state=tk.NORMAL)
+            except Exception as e:
+                self._update_status(f"Error loading images: {e}")
+
+        future = _executor.submit(scan)
+        future.add_done_callback(lambda f: self.root.after(0, lambda: on_done(f)))
+
+    def after_idle_safe(self, func):
+        """Schedule function to run on main thread."""
+        self.root.after_idle(func)
 
     def _refresh_tree(self):
         """Refresh the image list treeview."""
@@ -1094,7 +1190,6 @@ class SoilScanApp:
         visible_count = 0
 
         for i, item in enumerate(self.images):
-            # Apply filter
             if filter_val == "pending" and item.status != "pending":
                 continue
             elif filter_val == "processed" and not item.is_processed:
@@ -1102,20 +1197,18 @@ class SoilScanApp:
             elif filter_val == "error" and item.status != "error":
                 continue
 
-            # Status display
             status_map = {
-                "pending": "⏳ Pending",
-                "processing": "🔄 Processing",
-                "auto_cropped": "✅ Auto",
-                "manual_cropped": "✋ Manual",
-                "error": "❌ Error"
+                "pending": "Pending",
+                "processing": "Processing",
+                "auto_cropped": "Auto",
+                "manual_cropped": "Manual",
+                "error": "Error"
             }
             status_text = status_map.get(item.status, item.status)
 
             self.tree.insert("", tk.END, iid=str(i), text=item.display_name, values=(status_text,))
             visible_count += 1
 
-        # Update count
         total = len(self.images)
         processed = sum(1 for i in self.images if i.is_processed)
         manual = sum(1 for i in self.images if i.status == "manual_cropped")
@@ -1144,19 +1237,18 @@ class SoilScanApp:
         self.current_index = index
         item = self.images[index]
 
-        # Load original preview (from original source)
+        # Load previews (async)
         if item.original_path and item.original_path.exists():
             self.original_preview.load_image(image_path=item.original_path)
         else:
             self.original_preview.load_image(image_path=item.input_path)
 
-        # Load result preview if exists
         if item.output_path.exists():
             self.result_preview.load_image(image_path=item.output_path)
         else:
             self.result_preview.clear()
 
-        # Load manual crop canvas with ORIGINAL image
+        # Load manual crop canvas
         if item.original_path and item.original_path.exists():
             self.manual_canvas.load_image(item.original_path)
         else:
@@ -1166,10 +1258,8 @@ class SoilScanApp:
         self.browse_original_btn.configure(state=tk.NORMAL)
         self.manual_crop_btn.configure(state=tk.NORMAL)
 
-        # Update source status
         self._update_source_status(item)
 
-        # Update navigation buttons
         self.prev_btn.configure(state=tk.NORMAL if index > 0 else tk.DISABLED)
         self.next_btn.configure(state=tk.NORMAL if index < len(self.images) - 1 else tk.DISABLED)
 
@@ -1178,7 +1268,6 @@ class SoilScanApp:
         else:
             self.process_selected_btn.configure(state=tk.DISABLED)
 
-        # Select in tree
         self.tree.selection_set(str(index))
         self.tree.see(str(index))
 
@@ -1206,7 +1295,6 @@ class SoilScanApp:
         if self.processing or self.mode == "correction":
             return
 
-        # Get pending images
         pending = [i for i, item in enumerate(self.images) if item.status == "pending"]
 
         if not pending:
@@ -1230,11 +1318,9 @@ class SoilScanApp:
         self.process_all_btn.configure(state=tk.DISABLED)
         self.process_selected_btn.configure(state=tk.DISABLED)
 
-        # Setup progress
         self.progress['value'] = 0
         self.progress['maximum'] = len(indices)
 
-        # Start processing thread
         thread = threading.Thread(
             target=self._process_batch_thread,
             args=(indices,),
@@ -1242,7 +1328,6 @@ class SoilScanApp:
         )
         thread.start()
 
-        # Start checking queue
         self.root.after(100, self._check_process_queue)
 
     def _process_batch_thread(self, indices):
@@ -1253,10 +1338,8 @@ class SoilScanApp:
             self.process_queue.put(("update", idx))
 
             try:
-                # Ensure output directory exists
                 item.output_path.parent.mkdir(parents=True, exist_ok=True)
 
-                # Process image
                 with Image.open(item.input_path) as img:
                     if img.mode != 'RGB':
                         img = img.convert('RGB')
@@ -1328,22 +1411,18 @@ class SoilScanApp:
         item = self.images[self.current_index]
 
         try:
-            # Ensure output directory exists
             item.output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Save cropped image (replaces existing if any)
             cropped.save(item.output_path, 'PNG')
 
             item.status = "manual_cropped"
 
-            # Update UI
             self._refresh_tree()
             self.result_preview.load_image(pil_image=cropped)
-            self._update_status(f"✓ Manual crop saved: {item.output_path.name}")
+            self._update_status(f"Manual crop saved: {item.output_path.name}")
 
-            # Auto-advance to next image
             if self.current_index < len(self.images) - 1:
-                self.root.after(500, lambda: self._select_image(self.current_index + 1))
+                self.root.after(300, lambda: self._select_image(self.current_index + 1))
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save manual crop:\n{e}")
@@ -1355,7 +1434,6 @@ class SoilScanApp:
 
         item = self.images[self.current_index]
 
-        # Start in the original directory if available
         initial_dir = self.original_dir if self.original_dir else self.input_dir
         if initial_dir and not initial_dir.exists():
             initial_dir = None
@@ -1373,11 +1451,9 @@ class SoilScanApp:
             original_path = Path(file_path)
             item.original_path = original_path
 
-            # Reload previews with the new original
             self.original_preview.load_image(image_path=original_path)
             self.manual_canvas.load_image(original_path)
 
-            # Update source status
             self._update_source_status(item)
             self._update_status(f"Original loaded: {original_path.name}")
 
@@ -1385,21 +1461,19 @@ class SoilScanApp:
         """Update the source status label for the current image."""
         if item.original_path and item.original_path.exists():
             if item.original_path == item.input_path:
-                # Using input as original (same file)
                 self.source_status_label.configure(
                     text="Source: Using cropped image (no original found)",
-                    fg="#ff9800"  # Warning color
+                    fg="#ff9800"
                 )
             else:
-                # Found or manually set original
                 self.source_status_label.configure(
                     text=f"Source: {item.original_path.name}",
-                    fg="#28a745"  # Success color
+                    fg="#28a745"
                 )
         else:
             self.source_status_label.configure(
                 text="Source: Not found - use Browse to locate",
-                fg="#ff5555"  # Error color
+                fg="#ff5555"
             )
 
     def _open_input_folder(self):
@@ -1423,7 +1497,6 @@ class SoilScanApp:
 def main():
     root = tk.Tk()
 
-    # Set DPI awareness for Windows
     try:
         from ctypes import windll
         windll.shcore.SetProcessDpiAwareness(1)
@@ -1432,6 +1505,9 @@ def main():
 
     app = SoilScanApp(root)
     root.mainloop()
+
+    # Cleanup
+    _executor.shutdown(wait=False)
 
 
 if __name__ == '__main__':
