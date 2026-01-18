@@ -674,9 +674,9 @@ class SoilScanApp:
         )
         self.process_all_btn.pack(pady=5)
 
-        # Process Selected button
+        # Process Selected button (AI)
         self.process_selected_btn = tk.Button(
-            control_frame, text="Process Selected",
+            control_frame, text="AI Crop Selected",
             command=self._process_selected,
             bg="#555555", fg="#ffffff",
             relief=tk.FLAT, padx=20, pady=8,
@@ -685,8 +685,28 @@ class SoilScanApp:
         )
         self.process_selected_btn.pack(pady=5)
 
+        # Manual Crop Selected button (no AI)
+        self.manual_crop_btn = tk.Button(
+            control_frame, text="Manual Crop Selected",
+            command=self._apply_manual_crop,
+            bg=self.success_color, fg="#ffffff",
+            relief=tk.FLAT, padx=20, pady=8,
+            width=18,
+            state=tk.DISABLED
+        )
+        self.manual_crop_btn.pack(pady=5)
+
+        # Hint label
+        self.crop_hint_label = tk.Label(
+            control_frame,
+            text="Draw selection below first,\nthen click Manual Crop",
+            bg=self.panel_bg, fg="#888888",
+            font=("Segoe UI", 8)
+        )
+        self.crop_hint_label.pack(pady=(0, 5))
+
         # Separator
-        ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=20, padx=10)
+        ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15, padx=10)
 
         # Navigation
         tk.Label(
@@ -1144,6 +1164,7 @@ class SoilScanApp:
 
         self.apply_manual_btn.configure(state=tk.NORMAL)
         self.browse_original_btn.configure(state=tk.NORMAL)
+        self.manual_crop_btn.configure(state=tk.NORMAL)
 
         # Update source status
         self._update_source_status(item)
