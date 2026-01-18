@@ -597,7 +597,7 @@ class SoilScanApp:
         manual_frame = tk.Frame(preview_frame, bg=self.panel_bg)
         manual_frame.pack(fill=tk.X, pady=(10, 0))
 
-        # Manual crop header
+        # Manual crop header row 1
         header_frame = tk.Frame(manual_frame, bg=self.panel_bg)
         header_frame.pack(fill=tk.X, padx=10, pady=5)
 
@@ -617,6 +617,27 @@ class SoilScanApp:
             state=tk.DISABLED
         )
         self.apply_manual_btn.pack(side=tk.RIGHT)
+
+        # Source status row
+        source_frame = tk.Frame(manual_frame, bg=self.panel_bg)
+        source_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+
+        self.source_status_label = tk.Label(
+            source_frame,
+            text="Source: Not loaded",
+            bg=self.panel_bg, fg="#888888",
+            font=("Segoe UI", 9)
+        )
+        self.source_status_label.pack(side=tk.LEFT)
+
+        self.browse_original_btn = tk.Button(
+            source_frame, text="Browse Original...",
+            command=self._browse_original_image,
+            bg="#555555", fg="#ffffff",
+            relief=tk.FLAT, padx=10,
+            state=tk.DISABLED
+        )
+        self.browse_original_btn.pack(side=tk.RIGHT)
 
         # Manual crop canvas
         self.manual_canvas = ManualCropCanvas(manual_frame, height=200)
@@ -998,6 +1019,10 @@ class SoilScanApp:
             self.manual_canvas.load_image(item.input_path)
 
         self.apply_manual_btn.configure(state=tk.NORMAL)
+        self.browse_original_btn.configure(state=tk.NORMAL)
+
+        # Update source status
+        self._update_source_status(item)
 
         # Update navigation buttons
         self.prev_btn.configure(state=tk.NORMAL if index > 0 else tk.DISABLED)
@@ -1177,6 +1202,60 @@ class SoilScanApp:
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save manual crop:\n{e}")
+
+    def _browse_original_image(self):
+        """Browse for the original image when auto-detection fails."""
+        if self.current_index < 0:
+            return
+
+        item = self.images[self.current_index]
+
+        # Start in the original directory if available
+        initial_dir = self.original_dir if self.original_dir else self.input_dir
+        if initial_dir and not initial_dir.exists():
+            initial_dir = None
+
+        file_path = filedialog.askopenfilename(
+            title=f"Select Original Image for: {item.display_name}",
+            initialdir=initial_dir,
+            filetypes=[
+                ("Image files", "*.jpg *.jpeg *.png *.bmp *.webp"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if file_path:
+            original_path = Path(file_path)
+            item.original_path = original_path
+
+            # Reload previews with the new original
+            self.original_preview.load_image(image_path=original_path)
+            self.manual_canvas.load_image(original_path)
+
+            # Update source status
+            self._update_source_status(item)
+            self._update_status(f"Original loaded: {original_path.name}")
+
+    def _update_source_status(self, item: ImageItem):
+        """Update the source status label for the current image."""
+        if item.original_path and item.original_path.exists():
+            if item.original_path == item.input_path:
+                # Using input as original (same file)
+                self.source_status_label.configure(
+                    text="Source: Using cropped image (no original found)",
+                    fg="#ff9800"  # Warning color
+                )
+            else:
+                # Found or manually set original
+                self.source_status_label.configure(
+                    text=f"Source: {item.original_path.name}",
+                    fg="#28a745"  # Success color
+                )
+        else:
+            self.source_status_label.configure(
+                text="Source: Not found - use Browse to locate",
+                fg="#ff5555"  # Error color
+            )
 
     def _open_input_folder(self):
         """Open input/original folder in file explorer."""
