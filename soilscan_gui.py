@@ -8,6 +8,7 @@ Features:
 - Side-by-side preview (original vs cropped)
 - Batch processing with progress indicator
 - Auto-replacement of corrected images
+- Smart C- directory detection for correction mode
 """
 
 import tkinter as tk
@@ -29,15 +30,20 @@ except ImportError:
 
 class ImageItem:
     """Represents an image in the processing queue."""
-    def __init__(self, input_path: Path, output_path: Path):
-        self.input_path = input_path
-        self.output_path = output_path
+    def __init__(self, input_path: Path, output_path: Path, original_path: Path = None):
+        self.input_path = input_path  # Where to read for processing
+        self.output_path = output_path  # Where to save results
+        self.original_path = original_path or input_path  # Original source for manual crop
         self.status = "pending"  # pending, processing, auto_cropped, manual_cropped, error
         self.error_message = None
 
     @property
     def name(self):
         return self.input_path.name
+
+    @property
+    def display_name(self):
+        return self.output_path.name
 
     @property
     def is_processed(self):
@@ -73,7 +79,7 @@ class ManualCropCanvas(tk.Canvas):
         """Load and display an image."""
         try:
             self.original_image = Image.open(image_path)
-            if self.original_image.mode != 'RGB':
+            if self.original_image.mode not in ('RGB', 'RGBA'):
                 self.original_image = self.original_image.convert('RGB')
             self._fit_image()
             self.selection = None
@@ -111,7 +117,10 @@ class ManualCropCanvas(tk.Canvas):
         self.offset_y = (canvas_height - display_height) // 2
 
         # Resize and display
-        display_image = self.original_image.resize(
+        display_image = self.original_image.copy()
+        if display_image.mode == 'RGBA':
+            display_image = display_image.convert('RGB')
+        display_image = display_image.resize(
             (display_width, display_height),
             Image.Resampling.LANCZOS
         )
@@ -188,11 +197,17 @@ class ManualCropCanvas(tk.Canvas):
             return None
 
         x1, y1, x2, y2 = self.selection
-        cropped = self.original_image.crop((x1, y1, x2, y2))
+
+        # Get base image (convert RGBA to RGB for cropping source)
+        base_image = self.original_image
+        if base_image.mode == 'RGBA':
+            base_image = base_image.convert('RGB')
+
+        cropped = base_image.crop((x1, y1, x2, y2))
 
         # Create transparent background version
         # The cropped area becomes the foreground on transparent background
-        result = Image.new('RGBA', self.original_image.size, (0, 0, 0, 0))
+        result = Image.new('RGBA', base_image.size, (0, 0, 0, 0))
 
         # Paste the cropped region at its original position
         cropped_rgba = cropped.convert('RGBA')
@@ -230,6 +245,10 @@ class PreviewPanel(tk.Frame):
 
         self.photo = None
         self.original_image = None
+
+    def set_title(self, title):
+        """Update the panel title."""
+        self.title_label.configure(text=title)
 
     def load_image(self, image_path: Path = None, pil_image: Image.Image = None):
         """Load and display an image from path or PIL Image."""
@@ -315,7 +334,7 @@ class SoilScanApp:
     def __init__(self, root):
         self.root = root
         self.root.title("SoilScan - Soil Sample Background Remover")
-        self.root.geometry("1400x800")
+        self.root.geometry("1400x850")
         self.root.minsize(1200, 700)
 
         # Set dark theme colors
@@ -324,16 +343,22 @@ class SoilScanApp:
         self.accent_color = "#0078d4"
         self.panel_bg = "#252526"
         self.list_bg = "#2d2d2d"
+        self.warning_color = "#ff9800"
+        self.success_color = "#28a745"
 
         self.root.configure(bg=self.bg_color)
 
         # Data
         self.input_dir = None
         self.output_dir = None
+        self.original_dir = None  # For correction mode
         self.images: list[ImageItem] = []
         self.current_index = -1
         self.processing = False
         self.process_queue = queue.Queue()
+
+        # Mode: "normal" or "correction"
+        self.mode = "normal"
 
         # Configure styles
         self._setup_styles()
@@ -393,6 +418,9 @@ class SoilScanApp:
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
+        # Mode indicator banner
+        self._build_mode_banner(main_frame)
+
         # Top bar with directory selection
         self._build_top_bar(main_frame)
 
@@ -412,56 +440,85 @@ class SoilScanApp:
         # Bottom bar - Status and progress
         self._build_status_bar(main_frame)
 
+    def _build_mode_banner(self, parent):
+        """Build the mode indicator banner."""
+        self.mode_frame = tk.Frame(parent, bg=self.accent_color, height=35)
+        self.mode_frame.pack(fill=tk.X, pady=(0, 10))
+        self.mode_frame.pack_propagate(False)
+
+        self.mode_label = tk.Label(
+            self.mode_frame,
+            text="📁 NORMAL MODE - Select an input directory to process images",
+            bg=self.accent_color, fg="#ffffff",
+            font=("Segoe UI", 10, "bold")
+        )
+        self.mode_label.pack(pady=8)
+
+    def _update_mode_banner(self):
+        """Update the mode banner based on current mode."""
+        if self.mode == "correction":
+            self.mode_frame.configure(bg=self.warning_color)
+            self.mode_label.configure(
+                bg=self.warning_color,
+                text="🔧 CORRECTION MODE - Manual cropping from original images"
+            )
+        else:
+            self.mode_frame.configure(bg=self.accent_color)
+            self.mode_label.configure(
+                bg=self.accent_color,
+                text="📁 NORMAL MODE - Auto-process images with AI background removal"
+            )
+
     def _build_top_bar(self, parent):
         """Build top directory selection bar."""
         top_frame = tk.Frame(parent, bg=self.panel_bg, padx=10, pady=10)
         top_frame.pack(fill=tk.X)
 
-        # Input directory
+        # Row 1: Directory selection
+        row1 = tk.Frame(top_frame, bg=self.panel_bg)
+        row1.pack(fill=tk.X)
+
         tk.Label(
-            top_frame, text="Input:",
+            row1, text="Directory:",
             bg=self.panel_bg, fg=self.fg_color,
             font=("Segoe UI", 10)
         ).pack(side=tk.LEFT)
 
-        self.input_entry = tk.Entry(
-            top_frame, width=50,
+        self.dir_entry = tk.Entry(
+            row1, width=80,
             bg=self.list_bg, fg=self.fg_color,
             insertbackground=self.fg_color
         )
-        self.input_entry.pack(side=tk.LEFT, padx=(5, 0))
+        self.dir_entry.pack(side=tk.LEFT, padx=(5, 0))
 
         tk.Button(
-            top_frame, text="Browse...",
-            command=self._browse_input,
+            row1, text="Browse...",
+            command=self._browse_directory,
             bg=self.accent_color, fg="#ffffff",
-            relief=tk.FLAT, padx=10
-        ).pack(side=tk.LEFT, padx=(5, 20))
+            relief=tk.FLAT, padx=15
+        ).pack(side=tk.LEFT, padx=(10, 0))
 
-        # Output directory
-        tk.Label(
-            top_frame, text="Output:",
-            bg=self.panel_bg, fg=self.fg_color,
-            font=("Segoe UI", 10)
-        ).pack(side=tk.LEFT)
+        # Row 2: Info labels
+        self.info_frame = tk.Frame(top_frame, bg=self.panel_bg)
+        self.info_frame.pack(fill=tk.X, pady=(8, 0))
 
-        self.output_entry = tk.Entry(
-            top_frame, width=50,
-            bg=self.list_bg, fg=self.fg_color,
-            insertbackground=self.fg_color
+        self.source_label = tk.Label(
+            self.info_frame, text="",
+            bg=self.panel_bg, fg="#888888",
+            font=("Segoe UI", 9)
         )
-        self.output_entry.pack(side=tk.LEFT, padx=(5, 0))
+        self.source_label.pack(side=tk.LEFT)
 
-        tk.Button(
-            top_frame, text="Browse...",
-            command=self._browse_output,
-            bg="#555555", fg="#ffffff",
-            relief=tk.FLAT, padx=10
-        ).pack(side=tk.LEFT, padx=(5, 0))
+        self.output_label = tk.Label(
+            self.info_frame, text="",
+            bg=self.panel_bg, fg="#888888",
+            font=("Segoe UI", 9)
+        )
+        self.output_label.pack(side=tk.LEFT, padx=(20, 0))
 
     def _build_image_list(self, parent):
         """Build image list panel."""
-        list_frame = tk.Frame(parent, bg=self.panel_bg, width=300)
+        list_frame = tk.Frame(parent, bg=self.panel_bg, width=320)
         list_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
         list_frame.pack_propagate(False)
 
@@ -477,7 +534,7 @@ class SoilScanApp:
         filter_frame.pack(fill=tk.X, padx=10)
 
         self.filter_var = tk.StringVar(value="all")
-        filters = [("All", "all"), ("Pending", "pending"), ("Processed", "processed"), ("Errors", "error")]
+        filters = [("All", "all"), ("Pending", "pending"), ("Done", "processed"), ("Errors", "error")]
 
         for text, value in filters:
             tk.Radiobutton(
@@ -500,7 +557,7 @@ class SoilScanApp:
         )
         self.tree.heading("#0", text="Filename")
         self.tree.heading("status", text="Status")
-        self.tree.column("#0", width=180)
+        self.tree.column("#0", width=200)
         self.tree.column("status", width=80)
 
         scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree.yview)
@@ -544,17 +601,18 @@ class SoilScanApp:
         header_frame = tk.Frame(manual_frame, bg=self.panel_bg)
         header_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        tk.Label(
+        self.manual_label = tk.Label(
             header_frame,
-            text="Manual Crop (click and drag to select area)",
+            text="Manual Crop - Click and drag to select the soil area",
             bg=self.panel_bg, fg=self.fg_color,
             font=("Segoe UI", 10, "bold")
-        ).pack(side=tk.LEFT)
+        )
+        self.manual_label.pack(side=tk.LEFT)
 
         self.apply_manual_btn = tk.Button(
             header_frame, text="Apply Manual Crop",
             command=self._apply_manual_crop,
-            bg="#28a745", fg="#ffffff",
+            bg=self.success_color, fg="#ffffff",
             relief=tk.FLAT, padx=15,
             state=tk.DISABLED
         )
@@ -651,16 +709,26 @@ class SoilScanApp:
         # Separator
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=20, padx=10)
 
-        # Open output folder button
+        # Open folders
+        self.open_input_btn = tk.Button(
+            control_frame, text="Open Input Folder",
+            command=self._open_input_folder,
+            bg="#555555", fg="#ffffff",
+            relief=tk.FLAT, padx=20, pady=6,
+            width=18,
+            state=tk.DISABLED
+        )
+        self.open_input_btn.pack(pady=3)
+
         self.open_output_btn = tk.Button(
             control_frame, text="Open Output Folder",
             command=self._open_output_folder,
             bg="#555555", fg="#ffffff",
-            relief=tk.FLAT, padx=20, pady=8,
+            relief=tk.FLAT, padx=20, pady=6,
             width=18,
             state=tk.DISABLED
         )
-        self.open_output_btn.pack(pady=5)
+        self.open_output_btn.pack(pady=3)
 
     def _build_status_bar(self, parent):
         """Build status bar."""
@@ -670,7 +738,7 @@ class SoilScanApp:
 
         # Status label
         self.status_label = tk.Label(
-            status_frame, text="Ready - Select an input directory to begin",
+            status_frame, text="Ready - Select a directory to begin",
             bg=self.panel_bg, fg=self.fg_color,
             font=("Segoe UI", 9),
             anchor=tk.W
@@ -702,71 +770,155 @@ class SoilScanApp:
             "pip install rembg[cpu]"
         )
 
-    def _browse_input(self):
-        """Browse for input directory."""
-        directory = filedialog.askdirectory(title="Select Input Directory")
+    def _browse_directory(self):
+        """Browse for directory - auto-detect mode based on name."""
+        directory = filedialog.askdirectory(title="Select Directory")
         if directory:
-            self.input_dir = Path(directory)
-            self.input_entry.delete(0, tk.END)
-            self.input_entry.insert(0, str(self.input_dir))
+            self._load_directory(Path(directory))
+
+    def _load_directory(self, directory: Path):
+        """Load directory and detect mode based on C- prefix."""
+        dir_name = directory.name
+
+        if dir_name.startswith("C-"):
+            # CORRECTION MODE: User selected a cropped output folder
+            self.mode = "correction"
+            self.output_dir = directory
+
+            # Find original folder (remove C- prefix)
+            original_name = dir_name[2:]  # Remove "C-"
+            potential_original = directory.parent / original_name
+
+            if potential_original.exists():
+                self.original_dir = potential_original
+                self.input_dir = directory  # For listing cropped images
+            else:
+                # Try to find original with images subfolder
+                potential_with_images = directory.parent / original_name / "images"
+                if potential_with_images.exists():
+                    self.original_dir = potential_with_images
+                    self.input_dir = directory
+                else:
+                    messagebox.showwarning(
+                        "Original Folder Not Found",
+                        f"Could not find the original folder:\n{potential_original}\n\n"
+                        "Manual cropping will use the cropped images as source."
+                    )
+                    self.original_dir = directory
+                    self.input_dir = directory
+
+            self.source_label.configure(text=f"Original: {self.original_dir}")
+            self.output_label.configure(text=f"Output: {self.output_dir}")
+
+            # Update UI for correction mode
+            self.process_all_btn.configure(state=tk.DISABLED)
+            self.original_preview.set_title("Original (Source)")
+            self.result_preview.set_title("Current Crop (Will be replaced)")
+
+        else:
+            # NORMAL MODE: User selected a source folder
+            self.mode = "normal"
+            self.input_dir = directory
+            self.original_dir = directory
 
             # Auto-generate output directory with C- prefix
-            input_name = self.input_dir.name
+            input_name = directory.name
             if input_name.lower() in ('images', 'image', 'photos', 'photo', 'pics'):
-                input_name = self.input_dir.parent.name
+                input_name = directory.parent.name
+                self.original_dir = directory
 
             output_name = f"C-{input_name}"
-            self.output_dir = self.input_dir.parent / output_name
+            self.output_dir = directory.parent / output_name
 
-            self.output_entry.delete(0, tk.END)
-            self.output_entry.insert(0, str(self.output_dir))
+            self.source_label.configure(text=f"Input: {self.input_dir}")
+            self.output_label.configure(text=f"Output: {self.output_dir}")
 
-            self._load_images()
+            # Update UI for normal mode
+            self.process_all_btn.configure(state=tk.NORMAL)
+            self.original_preview.set_title("Original")
+            self.result_preview.set_title("Cropped Result")
 
-    def _browse_output(self):
-        """Browse for output directory."""
-        directory = filedialog.askdirectory(title="Select Output Directory")
-        if directory:
-            self.output_dir = Path(directory)
-            self.output_entry.delete(0, tk.END)
-            self.output_entry.insert(0, str(self.output_dir))
+        # Update entry and banner
+        self.dir_entry.delete(0, tk.END)
+        self.dir_entry.insert(0, str(directory))
+        self._update_mode_banner()
+
+        # Load images
+        self._load_images()
 
     def _load_images(self):
-        """Load images from input directory."""
-        if not self.input_dir or not self.input_dir.exists():
-            return
-
+        """Load images based on current mode."""
         self.images.clear()
         extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.webp')
 
-        # Find all images recursively
-        for ext in extensions:
-            for img_path in self.input_dir.rglob(f'*{ext}'):
-                # Calculate output path
-                try:
-                    rel_path = img_path.relative_to(self.input_dir)
-                except ValueError:
-                    rel_path = Path(img_path.name)
+        if self.mode == "correction":
+            # In correction mode, list cropped images and find originals
+            for ext in extensions:
+                for img_path in self.output_dir.rglob(f'*{ext}'):
+                    # Find corresponding original
+                    try:
+                        rel_path = img_path.relative_to(self.output_dir)
+                    except ValueError:
+                        rel_path = Path(img_path.name)
 
-                output_path = self.output_dir / rel_path.with_suffix('.png')
+                    # Original might be jpg while cropped is png
+                    original_path = None
+                    for orig_ext in extensions:
+                        potential = self.original_dir / rel_path.with_suffix(orig_ext)
+                        if potential.exists():
+                            original_path = potential
+                            break
 
-                item = ImageItem(img_path, output_path)
+                    if original_path is None:
+                        # Try without nested structure
+                        for orig_ext in extensions:
+                            potential = self.original_dir / rel_path.name
+                            potential = potential.with_suffix(orig_ext)
+                            if potential.exists():
+                                original_path = potential
+                                break
 
-                # Check if already processed
-                if output_path.exists():
+                    item = ImageItem(
+                        input_path=img_path,
+                        output_path=img_path,
+                        original_path=original_path or img_path
+                    )
                     item.status = "auto_cropped"
+                    self.images.append(item)
 
-                self.images.append(item)
+        else:
+            # Normal mode - list source images
+            for ext in extensions:
+                for img_path in self.input_dir.rglob(f'*{ext}'):
+                    try:
+                        rel_path = img_path.relative_to(self.input_dir)
+                    except ValueError:
+                        rel_path = Path(img_path.name)
+
+                    output_path = self.output_dir / rel_path.with_suffix('.png')
+
+                    item = ImageItem(
+                        input_path=img_path,
+                        output_path=output_path,
+                        original_path=img_path
+                    )
+
+                    if output_path.exists():
+                        item.status = "auto_cropped"
+
+                    self.images.append(item)
 
         # Sort by name
         self.images.sort(key=lambda x: x.name.lower())
 
         self._refresh_tree()
-        self._update_status(f"Loaded {len(self.images)} images")
+
+        mode_text = "correction" if self.mode == "correction" else "processing"
+        self._update_status(f"Loaded {len(self.images)} images for {mode_text}")
 
         # Enable controls
         if self.images:
-            self.process_all_btn.configure(state=tk.NORMAL)
+            self.open_input_btn.configure(state=tk.NORMAL)
             self.open_output_btn.configure(state=tk.NORMAL)
 
     def _refresh_tree(self):
@@ -790,18 +942,21 @@ class SoilScanApp:
                 "pending": "⏳ Pending",
                 "processing": "🔄 Processing",
                 "auto_cropped": "✅ Auto",
-                "manual_cropped": "✅ Manual",
+                "manual_cropped": "✋ Manual",
                 "error": "❌ Error"
             }
             status_text = status_map.get(item.status, item.status)
 
-            self.tree.insert("", tk.END, iid=str(i), text=item.name, values=(status_text,))
+            self.tree.insert("", tk.END, iid=str(i), text=item.display_name, values=(status_text,))
             visible_count += 1
 
         # Update count
         total = len(self.images)
         processed = sum(1 for i in self.images if i.is_processed)
-        self.count_label.configure(text=f"{visible_count} shown / {total} total ({processed} processed)")
+        manual = sum(1 for i in self.images if i.status == "manual_cropped")
+        self.count_label.configure(
+            text=f"{visible_count} shown / {total} total\n({processed} processed, {manual} manual)"
+        )
 
     def _apply_filter(self):
         """Apply filter to image list."""
@@ -824,8 +979,11 @@ class SoilScanApp:
         self.current_index = index
         item = self.images[index]
 
-        # Load original preview
-        self.original_preview.load_image(image_path=item.input_path)
+        # Load original preview (from original source)
+        if item.original_path and item.original_path.exists():
+            self.original_preview.load_image(image_path=item.original_path)
+        else:
+            self.original_preview.load_image(image_path=item.input_path)
 
         # Load result preview if exists
         if item.output_path.exists():
@@ -833,20 +991,31 @@ class SoilScanApp:
         else:
             self.result_preview.clear()
 
-        # Load manual crop canvas
-        self.manual_canvas.load_image(item.input_path)
+        # Load manual crop canvas with ORIGINAL image
+        if item.original_path and item.original_path.exists():
+            self.manual_canvas.load_image(item.original_path)
+        else:
+            self.manual_canvas.load_image(item.input_path)
+
         self.apply_manual_btn.configure(state=tk.NORMAL)
 
         # Update navigation buttons
         self.prev_btn.configure(state=tk.NORMAL if index > 0 else tk.DISABLED)
         self.next_btn.configure(state=tk.NORMAL if index < len(self.images) - 1 else tk.DISABLED)
-        self.process_selected_btn.configure(state=tk.NORMAL)
+
+        if self.mode == "normal":
+            self.process_selected_btn.configure(state=tk.NORMAL)
+        else:
+            self.process_selected_btn.configure(state=tk.DISABLED)
 
         # Select in tree
         self.tree.selection_set(str(index))
         self.tree.see(str(index))
 
-        self._update_status(f"Viewing: {item.name}")
+        status_text = f"Viewing: {item.display_name}"
+        if self.mode == "correction":
+            status_text += " (draw selection and click Apply Manual Crop to correct)"
+        self._update_status(status_text)
 
     def _prev_image(self):
         """Go to previous image."""
@@ -864,7 +1033,7 @@ class SoilScanApp:
             messagebox.showerror("Error", "rembg is not installed. Cannot perform automatic processing.")
             return
 
-        if self.processing:
+        if self.processing or self.mode == "correction":
             return
 
         # Get pending images
@@ -882,7 +1051,7 @@ class SoilScanApp:
             messagebox.showerror("Error", "rembg is not installed. Cannot perform automatic processing.")
             return
 
-        if self.current_index >= 0:
+        if self.current_index >= 0 and self.mode == "normal":
             self._start_batch_processing([self.current_index])
 
     def _start_batch_processing(self, indices):
@@ -960,8 +1129,9 @@ class SoilScanApp:
 
                 elif msg_type == "done":
                     self.processing = False
-                    self.process_all_btn.configure(state=tk.NORMAL)
-                    self.process_selected_btn.configure(state=tk.NORMAL)
+                    if self.mode == "normal":
+                        self.process_all_btn.configure(state=tk.NORMAL)
+                        self.process_selected_btn.configure(state=tk.NORMAL)
                     self._update_status("Processing complete!")
                     self.progress_label.configure(text="")
                     return
@@ -979,7 +1149,10 @@ class SoilScanApp:
 
         cropped = self.manual_canvas.get_cropped_image()
         if cropped is None:
-            messagebox.showwarning("No Selection", "Please draw a selection rectangle on the image first.")
+            messagebox.showwarning(
+                "No Selection",
+                "Please draw a selection rectangle around the soil area first."
+            )
             return
 
         item = self.images[self.current_index]
@@ -996,18 +1169,26 @@ class SoilScanApp:
             # Update UI
             self._refresh_tree()
             self.result_preview.load_image(pil_image=cropped)
-            self._update_status(f"Manual crop saved: {item.output_path.name}")
+            self._update_status(f"✓ Manual crop saved: {item.output_path.name}")
+
+            # Auto-advance to next image
+            if self.current_index < len(self.images) - 1:
+                self.root.after(500, lambda: self._select_image(self.current_index + 1))
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save manual crop:\n{e}")
 
+    def _open_input_folder(self):
+        """Open input/original folder in file explorer."""
+        folder = self.original_dir or self.input_dir
+        if folder and folder.exists():
+            os.startfile(folder)
+
     def _open_output_folder(self):
         """Open output folder in file explorer."""
-        if self.output_dir and self.output_dir.exists():
-            os.startfile(self.output_dir)
-        elif self.output_dir:
-            # Create directory and open
-            self.output_dir.mkdir(parents=True, exist_ok=True)
+        if self.output_dir:
+            if not self.output_dir.exists():
+                self.output_dir.mkdir(parents=True, exist_ok=True)
             os.startfile(self.output_dir)
 
     def _update_status(self, message):

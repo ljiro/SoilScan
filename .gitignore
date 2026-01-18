@@ -34,6 +34,9 @@ test_output.png
 
 # Sample data (user-specific)
 SF-AgriCapture_*/
+BL-AgriCapture_*/
+*-AgriCapture_*/
+*.7z
 
 # Cropped output data (user-specific)
 C-*/
