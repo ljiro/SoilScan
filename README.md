@@ -19,7 +19,9 @@ Select a folder starting with `C-` (like `C-SF-AgriCapture_20260117`) → App de
 ## Features
 
 - **AI Background Removal** - Automatic detection and removal using deep learning
+- **Archive Support** - Open .7z and .zip files directly (auto-extracts)
 - **Manual Crop Tool** - Fix misidentified images with click-and-drag selection
+- **Browse Original** - Manually locate source images when auto-detection fails
 - **Smart Mode Detection** - Automatically switches between processing and correction modes
 - **Side-by-Side Preview** - Compare original and cropped images
 - **Batch Processing** - Process entire folders with progress tracking
@@ -30,7 +32,9 @@ Select a folder starting with `C-` (like `C-SF-AgriCapture_20260117`) → App de
 ### Processing New Images
 ```
 1. Launch SoilScan.pyw
-2. Click "Browse" and select your image folder (e.g., SF-AgriCapture_20260117)
+2. Click "Browse" and select:
+   - A folder (e.g., SF-AgriCapture_20260117), OR
+   - An archive file (e.g., SF-AgriCapture_20260117.7z) - auto-extracts!
 3. Click "Process All Images"
 4. Wait for completion
 5. Output saved to C-{folder_name}

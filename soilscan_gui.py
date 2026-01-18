@@ -19,6 +19,7 @@ import threading
 import queue
 import os
 import sys
+import zipfile
 
 # Check for rembg availability
 try:
@@ -26,6 +27,13 @@ try:
     REMBG_AVAILABLE = True
 except ImportError:
     REMBG_AVAILABLE = False
+
+# Check for 7z support
+try:
+    import py7zr
+    PY7ZR_AVAILABLE = True
+except ImportError:
+    PY7ZR_AVAILABLE = False
 
 
 class ImageItem:
@@ -792,10 +800,126 @@ class SoilScanApp:
         )
 
     def _browse_directory(self):
-        """Browse for directory - auto-detect mode based on name."""
-        directory = filedialog.askdirectory(title="Select Directory")
-        if directory:
-            self._load_directory(Path(directory))
+        """Browse for directory or archive file - auto-detect mode based on name."""
+        # First, ask user what they want to open
+        choice = messagebox.askquestion(
+            "Select Input",
+            "Do you want to open a folder?\n\n"
+            "Click 'Yes' for a folder\n"
+            "Click 'No' for an archive file (.7z, .zip)",
+            icon='question'
+        )
+
+        if choice == 'yes':
+            # Browse for directory
+            directory = filedialog.askdirectory(title="Select Directory")
+            if directory:
+                self._load_directory(Path(directory))
+        else:
+            # Browse for archive file
+            filetypes = [("Archive files", "*.7z *.zip"), ("7z files", "*.7z"), ("ZIP files", "*.zip")]
+            archive_path = filedialog.askopenfilename(
+                title="Select Archive File",
+                filetypes=filetypes
+            )
+            if archive_path:
+                self._extract_and_load(Path(archive_path))
+
+    def _extract_and_load(self, archive_path: Path):
+        """Extract archive and load the extracted directory."""
+        extract_dir = archive_path.parent / archive_path.stem
+
+        # Check if already extracted
+        if extract_dir.exists():
+            result = messagebox.askyesno(
+                "Folder Exists",
+                f"The folder '{extract_dir.name}' already exists.\n\n"
+                "Use existing folder without re-extracting?"
+            )
+            if result:
+                self._load_directory(extract_dir)
+                return
+
+        # Check archive type and extract
+        suffix = archive_path.suffix.lower()
+
+        if suffix == '.7z':
+            if not PY7ZR_AVAILABLE:
+                messagebox.showerror(
+                    "Missing Dependency",
+                    "py7zr is not installed. Cannot extract .7z files.\n\n"
+                    "Run: pip install py7zr"
+                )
+                return
+            self._extract_7z(archive_path, extract_dir)
+
+        elif suffix == '.zip':
+            self._extract_zip(archive_path, extract_dir)
+
+        else:
+            messagebox.showerror("Error", f"Unsupported archive format: {suffix}")
+            return
+
+    def _extract_7z(self, archive_path: Path, extract_dir: Path):
+        """Extract .7z archive with progress dialog."""
+        self._update_status(f"Extracting {archive_path.name}...")
+        self.progress['value'] = 0
+        self.progress['mode'] = 'indeterminate'
+        self.progress.start(10)
+
+        def extract_thread():
+            try:
+                with py7zr.SevenZipFile(archive_path, mode='r') as archive:
+                    archive.extractall(path=extract_dir)
+                self.process_queue.put(("extract_done", extract_dir))
+            except Exception as e:
+                self.process_queue.put(("extract_error", str(e)))
+
+        thread = threading.Thread(target=extract_thread, daemon=True)
+        thread.start()
+        self.root.after(100, self._check_extract_queue)
+
+    def _extract_zip(self, archive_path: Path, extract_dir: Path):
+        """Extract .zip archive with progress dialog."""
+        self._update_status(f"Extracting {archive_path.name}...")
+        self.progress['value'] = 0
+        self.progress['mode'] = 'indeterminate'
+        self.progress.start(10)
+
+        def extract_thread():
+            try:
+                with zipfile.ZipFile(archive_path, 'r') as archive:
+                    archive.extractall(path=extract_dir)
+                self.process_queue.put(("extract_done", extract_dir))
+            except Exception as e:
+                self.process_queue.put(("extract_error", str(e)))
+
+        thread = threading.Thread(target=extract_thread, daemon=True)
+        thread.start()
+        self.root.after(100, self._check_extract_queue)
+
+    def _check_extract_queue(self):
+        """Check extraction queue and update UI."""
+        try:
+            msg_type, data = self.process_queue.get_nowait()
+
+            self.progress.stop()
+            self.progress['mode'] = 'determinate'
+
+            if msg_type == "extract_done":
+                self._update_status(f"Extraction complete: {data.name}")
+                self._load_directory(data)
+                return
+
+            elif msg_type == "extract_error":
+                messagebox.showerror("Extraction Error", f"Failed to extract archive:\n{data}")
+                self._update_status("Extraction failed")
+                return
+
+        except queue.Empty:
+            pass
+
+        self.root.after(100, self._check_extract_queue)
 
     def _load_directory(self, directory: Path):
         """Load directory and detect mode based on C- prefix."""
