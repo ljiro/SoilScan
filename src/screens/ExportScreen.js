@@ -1,0 +1,789 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+  ScrollView,
+  Animated,
+  Easing,
+  Platform,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+// Use legacy API - supported until SDK 55
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import * as Haptics from 'expo-haptics';
+import JSZip from 'jszip';
+import { getCSVPath, readCSV, parseCSVContent } from '../services/csvService';
+import { getImagesDir } from '../services/storageService';
+import { fonts, fontSizes, colors, radius, spacing, shadows, layout } from '../constants/theme';
+
+// Debug logging helper - __DEV__ is a React Native global
+// eslint-disable-next-line no-undef
+const DEBUG_MODE = typeof __DEV__ !== 'undefined' ? __DEV__ : false;
+const logDebug = (message, data = null) => {
+  if (DEBUG_MODE) {
+    if (data) {
+      console.log(`[ExportScreen] ${message}`, data);
+    } else {
+      console.log(`[ExportScreen] ${message}`);
+    }
+  }
+};
+
+export default function ExportScreen({ navigation }) {
+  const [stats, setStats] = useState({ records: 0, images: 0, csvSize: 0, imagesSize: 0 });
+  const [isExporting, setIsExporting] = useState(false);
+  const [isExportingZip, setIsExportingZip] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+
+  // Animation values
+  const contentOpacity = useRef(new Animated.Value(0)).current;
+  const contentSlide = useRef(new Animated.Value(30)).current;
+  const progressWidth = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    loadStats();
+    // Smooth entrance animation (no bounce)
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentSlide, {
+        toValue: 0,
+        duration: 400,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.cubic),
+      }),
+    ]).start();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadStats();
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  const loadStats = async () => {
+    try {
+      logDebug('Loading export stats...');
+
+      // Count CSV records using proper parser (handles newlines in quoted fields)
+      const csvContent = await readCSV();
+      const rows = parseCSVContent(csvContent);
+
+      // Count data rows (exclude header row)
+      const recordCount = Math.max(0, rows.length - 1);
+
+      logDebug(`CSV record count: ${recordCount} (total rows: ${rows.length})`);
+
+      // Get CSV file size
+      const csvPath = getCSVPath();
+      logDebug('CSV path:', csvPath);
+
+      let csvSize = 0;
+      try {
+        const csvInfo = await FileSystem.getInfoAsync(csvPath);
+        csvSize = csvInfo.exists ? (csvInfo.size / 1024).toFixed(1) : 0;
+        logDebug('CSV file info:', { exists: csvInfo.exists, size: csvInfo.size });
+      } catch (csvErr) {
+        logDebug('Error getting CSV info:', csvErr.message);
+      }
+
+      // Count images and calculate total size
+      const imagesDir = getImagesDir();
+      logDebug('Images directory:', imagesDir);
+
+      let imageCount = 0;
+      let totalImagesSize = 0;
+
+      try {
+        const countImages = async (dir) => {
+          const dirInfo = await FileSystem.getInfoAsync(dir);
+          if (!dirInfo.exists) {
+            logDebug('Directory does not exist:', dir);
+            return;
+          }
+
+          const items = await FileSystem.readDirectoryAsync(dir);
+          logDebug(`Found ${items.length} items in ${dir}`);
+
+          for (const item of items) {
+            const itemPath = `${dir}${item}`;
+            const info = await FileSystem.getInfoAsync(itemPath);
+            if (info.isDirectory) {
+              await countImages(`${itemPath}/`);
+            } else if (item.toLowerCase().endsWith('.jpg') || item.toLowerCase().endsWith('.jpeg')) {
+              imageCount++;
+              totalImagesSize += info.size || 0;
+            }
+          }
+        };
+        await countImages(imagesDir);
+        logDebug(`Image count: ${imageCount}, Total size: ${totalImagesSize} bytes`);
+      } catch (e) {
+        logDebug('Error counting images:', e.message);
+      }
+
+      const newStats = {
+        records: recordCount,
+        images: imageCount,
+        csvSize,
+        imagesSize: (totalImagesSize / (1024 * 1024)).toFixed(1),
+      };
+
+      logDebug('Final stats:', newStats);
+      setStats(newStats);
+    } catch (error) {
+      console.error('[ExportScreen] Error loading stats:', error);
+      logDebug('Error details:', { message: error.message, stack: error.stack });
+    }
+  };
+
+  const exportCSV = async () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {
+      // Haptics may not be available on all devices - safe to ignore
+    }
+
+    setIsExporting(true);
+    try {
+      const csvPath = getCSVPath();
+      const fileInfo = await FileSystem.getInfoAsync(csvPath);
+
+      if (!fileInfo.exists) {
+        Alert.alert('No Data', 'No data to export yet. Capture some photos first.');
+        setIsExporting(false);
+        return;
+      }
+
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        await Sharing.shareAsync(csvPath, {
+          mimeType: 'text/csv',
+          dialogTitle: 'Export CSV Data',
+          UTI: 'public.comma-separated-values-text',
+        });
+        try {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } catch {
+          // Haptics may not be available on all devices - safe to ignore
+        }
+      } else {
+        Alert.alert('Error', 'Sharing is not available on this device');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to export CSV');
+      console.error(error);
+    }
+    setIsExporting(false);
+  };
+
+  const collectAllImages = async (dir, images = []) => {
+    try {
+      const dirInfo = await FileSystem.getInfoAsync(dir);
+      if (!dirInfo.exists) {
+        logDebug('collectAllImages: Directory does not exist:', dir);
+        return images;
+      }
+
+      const items = await FileSystem.readDirectoryAsync(dir);
+      logDebug(`collectAllImages: Found ${items.length} items in ${dir}`);
+
+      for (const item of items) {
+        const itemPath = `${dir}${item}`;
+        const info = await FileSystem.getInfoAsync(itemPath);
+        if (info.isDirectory) {
+          await collectAllImages(`${itemPath}/`, images);
+        } else if (item.toLowerCase().endsWith('.jpg') || item.toLowerCase().endsWith('.jpeg')) {
+          // Get relative path from images directory
+          const relativePath = itemPath.replace(getImagesDir(), '');
+          images.push({ path: itemPath, relativePath });
+          logDebug(`Found image: ${relativePath}`);
+        }
+      }
+    } catch (error) {
+      logDebug('collectAllImages error:', error.message);
+    }
+    return images;
+  };
+
+  const exportZip = async () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    } catch {
+      // Haptics may not be available on all devices - safe to ignore
+    }
+
+    setIsExportingZip(true);
+    setExportProgress(0);
+
+    try {
+      const zip = new JSZip();
+
+      // Add CSV file
+      const csvPath = getCSVPath();
+      const csvInfo = await FileSystem.getInfoAsync(csvPath);
+
+      if (!csvInfo.exists) {
+        Alert.alert('No Data', 'No data to export yet. Capture some photos first.');
+        setIsExportingZip(false);
+        return;
+      }
+
+      const csvContent = await FileSystem.readAsStringAsync(csvPath);
+      zip.file('agricapture_data.csv', csvContent);
+      setExportProgress(10);
+
+      // Animate progress bar
+      Animated.timing(progressWidth, {
+        toValue: 10,
+        duration: 200,
+        useNativeDriver: false,
+      }).start();
+
+      // Collect all images
+      const images = await collectAllImages(getImagesDir());
+      const totalImages = images.length;
+
+      if (totalImages > 0) {
+        const imagesFolder = zip.folder('images');
+
+        for (let i = 0; i < images.length; i++) {
+          const { path, relativePath } = images[i];
+
+          // Read image as base64
+          const imageData = await FileSystem.readAsStringAsync(path, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+
+          // Add to zip with folder structure preserved
+          imagesFolder.file(relativePath, imageData, { base64: true });
+
+          // Update progress (10-90% for images)
+          const progress = 10 + ((i + 1) / totalImages) * 80;
+          setExportProgress(Math.round(progress));
+
+          Animated.timing(progressWidth, {
+            toValue: progress,
+            duration: 100,
+            useNativeDriver: false,
+          }).start();
+        }
+      }
+
+      setExportProgress(95);
+      Animated.timing(progressWidth, {
+        toValue: 95,
+        duration: 100,
+        useNativeDriver: false,
+      }).start();
+
+      // Generate ZIP file
+      const zipContent = await zip.generateAsync({ type: 'base64' });
+
+      // Create timestamp for filename
+      const now = new Date();
+      const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+
+      // Write ZIP file
+      const zipPath = `${FileSystem.cacheDirectory}AgriCapture_${timestamp}.zip`;
+      await FileSystem.writeAsStringAsync(zipPath, zipContent, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      // Verify ZIP file was created successfully
+      const zipInfo = await FileSystem.getInfoAsync(zipPath);
+      if (!zipInfo.exists || zipInfo.size === 0) {
+        throw new Error('Failed to create ZIP file - file is empty or does not exist');
+      }
+      logDebug('ZIP file created successfully', { path: zipPath, size: zipInfo.size });
+
+      setExportProgress(100);
+      Animated.timing(progressWidth, {
+        toValue: 100,
+        duration: 200,
+        useNativeDriver: false,
+      }).start();
+
+      // Share the ZIP file
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        try {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } catch {
+          // Haptics may not be available on all devices - safe to ignore
+        }
+
+        await Sharing.shareAsync(zipPath, {
+          mimeType: 'application/zip',
+          dialogTitle: 'Export to Google Drive',
+          UTI: 'public.zip-archive',
+        });
+        logDebug('ZIP file shared successfully');
+      } else {
+        Alert.alert('Error', 'Sharing is not available on this device');
+      }
+
+      // Clean up cache file after export (for Android SAF, the actual file is in user's chosen directory)
+      try {
+        await FileSystem.deleteAsync(zipPath, { idempotent: true });
+      } catch {
+        // Safe to ignore cleanup errors
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to create ZIP file: ' + error.message);
+      console.error(error);
+    }
+
+    setIsExportingZip(false);
+    setExportProgress(0);
+    progressWidth.setValue(0);
+  };
+
+  const clearAllData = () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    } catch {
+      // Haptics may not be available on all devices - safe to ignore
+    }
+
+    Alert.alert(
+      'Clear All Data',
+      'This will permanently delete all captured data and images. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All',
+          style: 'destructive',
+          onPress: performClearData,
+        },
+      ]
+    );
+  };
+
+  const performClearData = async () => {
+    try {
+      const csvPath = getCSVPath();
+      const imagesDir = getImagesDir();
+
+      // Delete CSV
+      await FileSystem.deleteAsync(csvPath, { idempotent: true });
+
+      // Delete images directory
+      await FileSystem.deleteAsync(imagesDir, { idempotent: true });
+
+      // Reload stats
+      await loadStats();
+
+      try {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {
+        // Haptics may not be available on all devices - safe to ignore
+      }
+
+      Alert.alert('Success', 'All data has been cleared');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to clear data');
+      console.error(error);
+    }
+  };
+
+  const progressInterpolate = progressWidth.interpolate({
+    inputRange: [0, 100],
+    outputRange: ['0%', '100%'],
+  });
+
+  return (
+    <View style={styles.wrapper}>
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Export</Text>
+        <Text style={styles.headerSubtitle}>Backup and share your data</Text>
+      </View>
+
+      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+        <Animated.View
+          style={{
+            opacity: contentOpacity,
+            transform: [{ translateY: contentSlide }],
+          }}
+        >
+          {/* Stats */}
+          <View style={styles.statsCard}>
+          <Text style={styles.statsTitle}>Data Summary</Text>
+          <View style={styles.statsRow}>
+            <View style={styles.statItem}>
+              <Text style={styles.statNumber}>{stats.records}</Text>
+              <Text style={styles.statLabel}>Records</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statNumber}>{stats.images}</Text>
+              <Text style={styles.statLabel}>Images</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statNumber}>{stats.csvSize}</Text>
+              <Text style={styles.statLabel}>KB (CSV)</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statNumber}>{stats.imagesSize}</Text>
+              <Text style={styles.statLabel}>MB (Images)</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Google Drive Export */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="cloud-upload-outline" size={22} color={colors.primary} />
+            <Text style={styles.sectionTitle}>Export to Google Drive</Text>
+          </View>
+          <Text style={styles.sectionDescription}>
+            Create a ZIP file containing all CSV data and images, then upload to your Google Drive for backup.
+          </Text>
+
+          <TouchableOpacity
+            style={[
+              styles.exportButton,
+              styles.zipButton,
+              (isExportingZip || stats.records === 0) && styles.disabled,
+            ]}
+            onPress={exportZip}
+            disabled={isExportingZip || stats.records === 0}
+          >
+            {isExportingZip ? (
+              <View style={styles.progressContainer}>
+                <View style={styles.progressBar}>
+                  <Animated.View
+                    style={[
+                      styles.progressFill,
+                      { width: progressInterpolate },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.progressText}>
+                  {exportProgress < 10
+                    ? 'Preparing...'
+                    : exportProgress < 95
+                    ? `Adding images... ${exportProgress}%`
+                    : 'Creating ZIP...'}
+                </Text>
+              </View>
+            ) : (
+              <>
+                <View style={styles.iconCircle}>
+                  <Ionicons name="archive-outline" size={24} color={colors.text.inverse} />
+                </View>
+                <View style={styles.exportTextContainer}>
+                  <Text style={styles.exportButtonText}>Export All (ZIP)</Text>
+                  <Text style={styles.exportSubtext}>CSV + {stats.images} images ({stats.imagesSize} MB)</Text>
+                </View>
+                <Ionicons name="share-outline" size={22} color={colors.text.inverse} />
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* CSV Only Export */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="document-text-outline" size={22} color={colors.secondary} />
+            <Text style={styles.sectionTitle}>Export CSV Only</Text>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.exportButton, styles.csvButton, (isExporting || stats.records === 0) && styles.disabled]}
+            onPress={exportCSV}
+            disabled={isExporting || stats.records === 0}
+          >
+            {isExporting ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <View style={[styles.iconCircle, { backgroundColor: colors.secondary }]}>
+                  <Ionicons name="document-outline" size={24} color={colors.text.inverse} />
+                </View>
+                <View style={styles.exportTextContainer}>
+                  <Text style={styles.exportButtonText}>Export CSV</Text>
+                  <Text style={styles.exportSubtext}>Data only ({stats.csvSize} KB)</Text>
+                </View>
+                <Ionicons name="share-outline" size={22} color={colors.text.inverse} />
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* CSV Location Info */}
+        <View style={styles.pathBox}>
+          <Ionicons name="folder-outline" size={18} color={colors.text.secondary} />
+          <View style={styles.pathContent}>
+            <Text style={styles.pathLabel}>CSV Location:</Text>
+            <Text style={styles.pathText} numberOfLines={2}>
+              AgriCapture/data/agricapture_collections.csv
+            </Text>
+          </View>
+        </View>
+
+        {/* Instructions */}
+        <View style={styles.tipBox}>
+          <Ionicons name="bulb-outline" size={20} color={colors.warning} />
+          <Text style={styles.tipText}>
+            After exporting, select "Google Drive" from the share menu to upload your data for backup and sharing.
+          </Text>
+        </View>
+
+        {/* Danger Zone */}
+        <View style={styles.dangerSection}>
+          <Text style={styles.dangerTitle}>Danger Zone</Text>
+          <TouchableOpacity
+            style={[styles.clearButton, stats.records === 0 && styles.disabledClear]}
+            onPress={clearAllData}
+            disabled={stats.records === 0}
+          >
+            <Ionicons name="trash-outline" size={18} color="#c62828" />
+            <Text style={styles.clearButtonText}> Clear All Data</Text>
+          </TouchableOpacity>
+          <Text style={styles.dangerHint}>
+            Export your data first before clearing
+          </Text>
+        </View>
+
+        <View style={{ height: layout.contentPaddingBottom }} />
+      </Animated.View>
+      </ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrapper: {
+    flex: 1,
+    backgroundColor: colors.background.secondary,
+  },
+  header: {
+    paddingTop: 60,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.lg,
+    backgroundColor: colors.primary,
+    ...shadows.header,
+  },
+  headerTitle: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.xxl,
+    color: colors.text.inverse,
+  },
+  headerSubtitle: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: spacing.xs,
+  },
+  container: {
+    flex: 1,
+    padding: spacing.lg,
+  },
+  statsCard: {
+    backgroundColor: colors.background.primary,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    marginBottom: spacing.lg,
+    ...shadows.sm,
+  },
+  statsTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.md,
+    color: colors.text.primary,
+    marginBottom: spacing.lg,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  statItem: {
+    alignItems: 'center',
+  },
+  statNumber: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.xxl,
+    color: colors.primary,
+  },
+  statLabel: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    color: colors.text.secondary,
+    marginTop: spacing.xs,
+  },
+  section: {
+    backgroundColor: colors.background.primary,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
+    ...shadows.sm,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  sectionTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.md,
+    color: colors.text.primary,
+  },
+  sectionDescription: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    color: colors.text.secondary,
+    marginBottom: spacing.lg,
+    lineHeight: 20,
+  },
+  exportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: spacing.lg,
+    borderRadius: radius.xl,
+    ...shadows.md,
+  },
+  zipButton: {
+    backgroundColor: colors.primary,
+  },
+  csvButton: {
+    backgroundColor: colors.secondary,
+  },
+  disabled: {
+    opacity: 0.5,
+  },
+  iconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.md,
+  },
+  exportTextContainer: {
+    flex: 1,
+  },
+  exportButtonText: {
+    fontFamily: fonts.semiBold,
+    color: colors.text.inverse,
+    fontSize: fontSizes.md,
+  },
+  exportSubtext: {
+    fontFamily: fonts.regular,
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: fontSizes.sm,
+    marginTop: 2,
+  },
+  progressContainer: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+  },
+  progressBar: {
+    height: 8,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    borderRadius: radius.sm,
+    overflow: 'hidden',
+    marginBottom: spacing.sm,
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: colors.text.inverse,
+    borderRadius: radius.sm,
+  },
+  progressText: {
+    fontFamily: fonts.medium,
+    color: colors.text.inverse,
+    fontSize: fontSizes.sm,
+    textAlign: 'center',
+  },
+  pathBox: {
+    flexDirection: 'row',
+    backgroundColor: colors.background.primary,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  pathContent: {
+    flex: 1,
+  },
+  pathLabel: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+    color: colors.text.secondary,
+    marginBottom: 2,
+  },
+  pathText: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    color: colors.text.tertiary,
+  },
+  tipBox: {
+    flexDirection: 'row',
+    backgroundColor: colors.warningLight,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    marginBottom: spacing.lg,
+    gap: spacing.sm,
+    alignItems: 'flex-start',
+  },
+  tipText: {
+    flex: 1,
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    color: colors.text.primary,
+    lineHeight: 20,
+  },
+  dangerSection: {
+    backgroundColor: colors.background.primary,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.errorLight,
+    ...shadows.sm,
+  },
+  dangerTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.sm,
+    color: colors.error,
+    marginBottom: spacing.md,
+  },
+  clearButton: {
+    flexDirection: 'row',
+    backgroundColor: colors.errorLight,
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.error,
+  },
+  disabledClear: {
+    opacity: 0.5,
+  },
+  clearButtonText: {
+    fontFamily: fonts.semiBold,
+    color: colors.error,
+    fontSize: fontSizes.base,
+  },
+  dangerHint: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    color: colors.text.tertiary,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+});
