@@ -415,10 +415,12 @@ export const deleteFromCSV = async (uuid) => {
 };
 
 /**
- * Get the highest spot number from the CSV
+ * Get the highest spot number from the CSV for a specific location
+ * @param {string} municipality - Municipality name to filter by (optional, if not provided returns global max)
+ * @param {string} barangay - Barangay name to filter by (optional, if not provided returns global max)
  * @returns {Promise<number>} Highest spot number or 0 if no data
  */
-export const getLastSpotNumber = async () => {
+export const getLastSpotNumber = async (municipality = null, barangay = null) => {
   try {
     // Check if file exists
     const fileInfo = await FileSystem.getInfoAsync(getCSVFilePath());
@@ -436,17 +438,23 @@ export const getLastSpotNumber = async () => {
     }
 
     const spotIndex = CSV_HEADERS.indexOf('spot_number');
+    const municipalityIndex = CSV_HEADERS.indexOf('municipality');
+    const barangayIndex = CSV_HEADERS.indexOf('barangay');
     let maxSpot = 0;
 
     // Skip header row (index 0)
     for (let i = 1; i < rows.length; i++) {
+      // Filter by location if provided
+      if (municipality && rows[i][municipalityIndex] !== municipality) continue;
+      if (barangay && rows[i][barangayIndex] !== barangay) continue;
+
       const spotNum = parseInt(rows[i][spotIndex], 10);
       if (!isNaN(spotNum) && spotNum > maxSpot) {
         maxSpot = spotNum;
       }
     }
 
-    console.log('[CSVService] Last spot number:', maxSpot);
+    console.log(`[CSVService] Last spot number for ${municipality || 'all'}/${barangay || 'all'}:`, maxSpot);
     return maxSpot;
   } catch (error) {
     console.error('[CSVService] Error getting last spot number:', error.message);
@@ -455,11 +463,13 @@ export const getLastSpotNumber = async () => {
 };
 
 /**
- * Get shots count for a specific spot number
+ * Get shots count for a specific spot number at a specific location
  * @param {number} spotNumber - The spot number to count shots for
+ * @param {string} municipality - Municipality name to filter by (optional)
+ * @param {string} barangay - Barangay name to filter by (optional)
  * @returns {Promise<number>} Number of shots for the spot
  */
-export const getShotsForSpot = async (spotNumber) => {
+export const getShotsForSpot = async (spotNumber, municipality = null, barangay = null) => {
   try {
     // Check if file exists
     const fileInfo = await FileSystem.getInfoAsync(getCSVFilePath());
@@ -473,17 +483,23 @@ export const getShotsForSpot = async (spotNumber) => {
     if (rows.length <= 1) return 0;
 
     const spotIndex = CSV_HEADERS.indexOf('spot_number');
+    const municipalityIndex = CSV_HEADERS.indexOf('municipality');
+    const barangayIndex = CSV_HEADERS.indexOf('barangay');
     let count = 0;
 
     // Skip header row (index 0)
     for (let i = 1; i < rows.length; i++) {
+      // Filter by location if provided
+      if (municipality && rows[i][municipalityIndex] !== municipality) continue;
+      if (barangay && rows[i][barangayIndex] !== barangay) continue;
+
       const spotNum = parseInt(rows[i][spotIndex], 10);
       if (spotNum === spotNumber) {
         count++;
       }
     }
 
-    console.log(`[CSVService] Shots for spot ${spotNumber}:`, count);
+    console.log(`[CSVService] Shots for spot ${spotNumber} at ${municipality || 'all'}/${barangay || 'all'}:`, count);
     return count;
   } catch (error) {
     console.error('[CSVService] Error getting shots for spot:', error.message);
@@ -492,11 +508,13 @@ export const getShotsForSpot = async (spotNumber) => {
 };
 
 /**
- * Get all existing shot numbers for a specific spot
+ * Get all existing shot numbers for a specific spot at a specific location
  * @param {number} spotNumber - The spot number to check
+ * @param {string} municipality - Municipality name to filter by (optional)
+ * @param {string} barangay - Barangay name to filter by (optional)
  * @returns {Promise<number[]>} Array of existing shot numbers
  */
-export const getExistingShotsForSpot = async (spotNumber) => {
+export const getExistingShotsForSpot = async (spotNumber, municipality = null, barangay = null) => {
   try {
     const fileInfo = await FileSystem.getInfoAsync(getCSVFilePath());
     if (!fileInfo.exists) {
@@ -510,9 +528,15 @@ export const getExistingShotsForSpot = async (spotNumber) => {
 
     const spotIndex = CSV_HEADERS.indexOf('spot_number');
     const shotIndex = CSV_HEADERS.indexOf('shot_number');
+    const municipalityIndex = CSV_HEADERS.indexOf('municipality');
+    const barangayIndex = CSV_HEADERS.indexOf('barangay');
     const shots = [];
 
     for (let i = 1; i < rows.length; i++) {
+      // Filter by location if provided
+      if (municipality && rows[i][municipalityIndex] !== municipality) continue;
+      if (barangay && rows[i][barangayIndex] !== barangay) continue;
+
       const spotNum = parseInt(rows[i][spotIndex], 10);
       if (spotNum === spotNumber) {
         const shotNum = parseInt(rows[i][shotIndex], 10) || 0;
@@ -520,7 +544,7 @@ export const getExistingShotsForSpot = async (spotNumber) => {
       }
     }
 
-    console.log(`[CSVService] Existing shots for spot ${spotNumber}:`, shots.sort((a, b) => a - b));
+    console.log(`[CSVService] Existing shots for spot ${spotNumber} at ${municipality || 'all'}/${barangay || 'all'}:`, shots.sort((a, b) => a - b));
     return shots.sort((a, b) => a - b);
   } catch (error) {
     console.error('[CSVService] Error getting existing shots:', error.message);
@@ -529,14 +553,16 @@ export const getExistingShotsForSpot = async (spotNumber) => {
 };
 
 /**
- * Get the next available shot number for a spot (fills gaps first)
+ * Get the next available shot number for a spot (fills gaps first) at a specific location
  * @param {number} spotNumber - The spot number to check
  * @param {number} shotsPerSpot - Maximum shots allowed per spot
+ * @param {string} municipality - Municipality name to filter by (optional)
+ * @param {string} barangay - Barangay name to filter by (optional)
  * @returns {Promise<{nextShot: number, existingCount: number, isComplete: boolean}>}
  */
-export const getNextAvailableShot = async (spotNumber, shotsPerSpot = 5) => {
+export const getNextAvailableShot = async (spotNumber, shotsPerSpot = 5, municipality = null, barangay = null) => {
   try {
-    const existingShots = await getExistingShotsForSpot(spotNumber);
+    const existingShots = await getExistingShotsForSpot(spotNumber, municipality, barangay);
     const existingCount = existingShots.length;
 
     // If spot is complete, return info
@@ -547,14 +573,14 @@ export const getNextAvailableShot = async (spotNumber, shotsPerSpot = 5) => {
     // Find the first missing shot number (gap)
     for (let i = 1; i <= shotsPerSpot; i++) {
       if (!existingShots.includes(i)) {
-        console.log(`[CSVService] Next available shot for spot ${spotNumber}: ${i} (filling gap)`);
+        console.log(`[CSVService] Next available shot for spot ${spotNumber} at ${municipality || 'all'}/${barangay || 'all'}: ${i} (filling gap)`);
         return { nextShot: i, existingCount, isComplete: false };
       }
     }
 
     // No gaps, return next number
     const nextShot = existingShots.length > 0 ? Math.max(...existingShots) + 1 : 1;
-    console.log(`[CSVService] Next available shot for spot ${spotNumber}: ${nextShot}`);
+    console.log(`[CSVService] Next available shot for spot ${spotNumber} at ${municipality || 'all'}/${barangay || 'all'}: ${nextShot}`);
     return { nextShot, existingCount, isComplete: nextShot > shotsPerSpot };
   } catch (error) {
     console.error('[CSVService] Error getting next available shot:', error.message);
@@ -563,12 +589,14 @@ export const getNextAvailableShot = async (spotNumber, shotsPerSpot = 5) => {
 };
 
 /**
- * Get the maximum shot number for a specific spot
+ * Get the maximum shot number for a specific spot at a specific location
  * This is used to determine the next shot number after deletions
  * @param {number} spotNumber - The spot number to check
+ * @param {string} municipality - Municipality name to filter by (optional)
+ * @param {string} barangay - Barangay name to filter by (optional)
  * @returns {Promise<number>} Maximum shot number for the spot (0 if no shots)
  */
-export const getMaxShotForSpot = async (spotNumber) => {
+export const getMaxShotForSpot = async (spotNumber, municipality = null, barangay = null) => {
   try {
     // Check if file exists
     const fileInfo = await FileSystem.getInfoAsync(getCSVFilePath());
@@ -583,10 +611,16 @@ export const getMaxShotForSpot = async (spotNumber) => {
 
     const spotIndex = CSV_HEADERS.indexOf('spot_number');
     const shotIndex = CSV_HEADERS.indexOf('shot_number');
+    const municipalityIndex = CSV_HEADERS.indexOf('municipality');
+    const barangayIndex = CSV_HEADERS.indexOf('barangay');
     let maxShot = 0;
 
     // Skip header row (index 0)
     for (let i = 1; i < rows.length; i++) {
+      // Filter by location if provided
+      if (municipality && rows[i][municipalityIndex] !== municipality) continue;
+      if (barangay && rows[i][barangayIndex] !== barangay) continue;
+
       const spotNum = parseInt(rows[i][spotIndex], 10);
       if (spotNum === spotNumber) {
         const shotNum = parseInt(rows[i][shotIndex], 10) || 0;
@@ -596,7 +630,7 @@ export const getMaxShotForSpot = async (spotNumber) => {
       }
     }
 
-    console.log(`[CSVService] Max shot for spot ${spotNumber}:`, maxShot);
+    console.log(`[CSVService] Max shot for spot ${spotNumber} at ${municipality || 'all'}/${barangay || 'all'}:`, maxShot);
     return maxShot;
   } catch (error) {
     console.error('[CSVService] Error getting max shot for spot:', error.message);

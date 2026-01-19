@@ -24,7 +24,7 @@ import {
   checkPermissions,
 } from '../services/gpsService';
 import { saveImage, loadConfig } from '../services/storageService';
-import { appendToCSV, initCSV, getLastSpotNumber, getShotsForSpot, getMaxShotForSpot, getNextAvailableShot, updateCSVRow } from '../services/csvService';
+import { appendToCSV, initCSV, getLastSpotNumber, getNextAvailableShot, updateCSVRow } from '../services/csvService';
 // Use legacy API - supported until SDK 55
 import * as FileSystem from 'expo-file-system/legacy';
 import { getWeatherData } from '../services/weatherService';
@@ -108,36 +108,68 @@ export default function CaptureScreen({ navigation, route }) {
   // Reload config and shot state when screen comes into focus
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
+      // reloadConfig now handles both config AND shot state refresh
       reloadConfig();
-      refreshShotState();
     });
     return unsubscribe;
-  }, [navigation, currentSpot, shotsPerSpot]);
+  }, [navigation]);
 
   // Refresh shot state from CSV (handles deletions)
-  const refreshShotState = async () => {
+  // Can optionally pass municipality/barangay labels directly to avoid stale state
+  const refreshShotState = async (municipalityLabel = null, barangayLabel = null, configShotsPerSpot = null) => {
     if (isRetakeMode) return; // Don't refresh in retake mode
 
-    console.log('[CaptureScreen] Refreshing shot state for spot:', currentSpot);
-    const shotInfo = await getNextAvailableShot(currentSpot, shotsPerSpot);
-    console.log('[CaptureScreen] Shot info:', shotInfo);
+    try {
+      // Use passed values or fall back to config state
+      const muniLabel = municipalityLabel ?? config.municipality?.label ?? config.municipality ?? null;
+      const bgyLabel = barangayLabel ?? config.barangay?.label ?? config.barangay ?? null;
+      const shotsCount = configShotsPerSpot ?? shotsPerSpot;
 
-    if (shotInfo.isComplete) {
-      // Spot is complete, move to next spot
-      const nextSpot = currentSpot + 1;
-      setCurrentSpot(nextSpot);
-      const nextSpotInfo = await getNextAvailableShot(nextSpot, shotsPerSpot);
-      setCurrentShot(nextSpotInfo.nextShot);
-      console.log('[CaptureScreen] Spot complete, moved to spot', nextSpot, 'shot', nextSpotInfo.nextShot);
-    } else {
-      setCurrentShot(shotInfo.nextShot);
-      console.log('[CaptureScreen] Set current shot to', shotInfo.nextShot, '(filling gap or next)');
+      console.log('[CaptureScreen] Refreshing shot state at', muniLabel, '/', bgyLabel);
+
+      // Get the last spot number for this location
+      const lastSpot = await getLastSpotNumber(muniLabel, bgyLabel);
+      const spotToCheck = lastSpot > 0 ? lastSpot : 1;
+
+      console.log('[CaptureScreen] Last spot for location:', lastSpot, '-> checking spot:', spotToCheck);
+
+      const shotInfo = await getNextAvailableShot(spotToCheck, shotsCount, muniLabel, bgyLabel);
+
+      if (!shotInfo) {
+        console.warn('[CaptureScreen] getNextAvailableShot returned null/undefined');
+        setCurrentSpot(1);
+        setCurrentShot(1);
+        return;
+      }
+
+      if (shotInfo.isComplete) {
+        // Spot is complete, move to next spot
+        const nextSpot = spotToCheck + 1;
+        setCurrentSpot(nextSpot);
+        const nextSpotInfo = await getNextAvailableShot(nextSpot, shotsCount, muniLabel, bgyLabel);
+        setCurrentShot(nextSpotInfo?.nextShot || 1);
+        console.log('[CaptureScreen] Spot complete, moved to spot', nextSpot, 'shot', nextSpotInfo?.nextShot || 1);
+      } else {
+        setCurrentSpot(spotToCheck);
+        setCurrentShot(shotInfo.nextShot || 1);
+        console.log('[CaptureScreen] Set spot', spotToCheck, 'shot', shotInfo.nextShot || 1);
+      }
+    } catch (error) {
+      console.error('[CaptureScreen] refreshShotState error:', error.message);
+      // Reset to safe defaults on error
+      setCurrentSpot(1);
+      setCurrentShot(1);
     }
   };
 
   const reloadConfig = async () => {
     const userConfig = await loadConfig('user_config');
     if (userConfig) {
+      // Extract labels BEFORE setting state (to use for shot refresh)
+      const municipalityLabel = userConfig.municipalityLabel || null;
+      const barangayLabel = userConfig.barangayLabel || null;
+      const configShotsPerSpot = userConfig.shotsPerSpot || 5;
+
       setConfig({
         municipality: userConfig.municipalityId
           ? { id: userConfig.municipalityId, label: userConfig.municipalityLabel }
@@ -163,6 +195,12 @@ export default function CaptureScreen({ navigation, route }) {
 
       if (userConfig.captureMode) {
         setCaptureMode(userConfig.captureMode);
+      }
+
+      // Refresh shot state with the FRESH values (not stale React state)
+      // This ensures shot counter updates correctly when changing locations
+      if (!isRetakeMode) {
+        await refreshShotState(municipalityLabel, barangayLabel, configShotsPerSpot);
       }
     }
   };
@@ -222,18 +260,23 @@ export default function CaptureScreen({ navigation, route }) {
       startLocationWatch();
     }
 
-    // Initialize CSV and load last spot
+    // Initialize CSV and load last spot for current location
     console.log('[CaptureScreen] Initializing CSV storage...');
     const csvResult = await initCSV();
     console.log('[CaptureScreen] CSV init result:', csvResult);
 
-    const lastSpot = await getLastSpotNumber();
-    console.log('[CaptureScreen] Last spot number:', lastSpot);
+    // Get municipality and barangay from config for location-specific spot tracking
+    const municipality = userConfig?.municipalityLabel || null;
+    const barangay = userConfig?.barangayLabel || null;
+    console.log('[CaptureScreen] Current location:', municipality, '/', barangay);
+
+    const lastSpot = await getLastSpotNumber(municipality, barangay);
+    console.log('[CaptureScreen] Last spot number for location:', lastSpot);
     if (lastSpot > 0) {
       setCurrentSpot(lastSpot);
       // Get next available shot (fills gaps from deletions)
       const configShotsPerSpot = userConfig?.shotsPerSpot || 5;
-      const shotInfo = await getNextAvailableShot(lastSpot, configShotsPerSpot);
+      const shotInfo = await getNextAvailableShot(lastSpot, configShotsPerSpot, municipality, barangay);
       if (shotInfo.isComplete) {
         // Last spot is complete, move to next
         setCurrentSpot(lastSpot + 1);
@@ -316,10 +359,18 @@ export default function CaptureScreen({ navigation, route }) {
     haptic('medium');
     const prevSpot = currentSpot - 1;
     setCurrentSpot(prevSpot);
-    // Get next available shot for previous spot (fills gaps)
-    const shotInfo = await getNextAvailableShot(prevSpot, shotsPerSpot);
-    setCurrentShot(shotInfo.nextShot);
-    console.log('[CaptureScreen] Moved to spot', prevSpot, 'shot', shotInfo.nextShot);
+
+    try {
+      // Get next available shot for previous spot (fills gaps) at current location
+      const municipalityLabel = config.municipality?.label ?? config.municipality ?? null;
+      const barangayLabel = config.barangay?.label ?? config.barangay ?? null;
+      const shotInfo = await getNextAvailableShot(prevSpot, shotsPerSpot, municipalityLabel, barangayLabel);
+      setCurrentShot(shotInfo?.nextShot || 1);
+      console.log('[CaptureScreen] Moved to spot', prevSpot, 'shot', shotInfo?.nextShot || 1);
+    } catch (error) {
+      console.error('[CaptureScreen] goToPreviousSpot error:', error.message);
+      setCurrentShot(1); // Fallback to shot 1
+    }
   };
 
   const takePicture = async () => {
@@ -474,37 +525,88 @@ export default function CaptureScreen({ navigation, route }) {
     setStep('camera');
   };
 
-  const saveAndContinue = async () => {
-    const { municipality, barangay, crops } = config;
+  // Helper: Safely extract label from config object
+  const getLabel = (obj) => {
+    if (!obj) return null;
+    if (typeof obj === 'string') return obj;
+    return obj.label || null;
+  };
 
-    // Validate setup
-    if (!municipality || !barangay || crops.length === 0) {
+  // Helper: Validate config has required fields
+  const validateConfig = () => {
+    const { municipality, barangay, crops } = config;
+    const municipalityLabel = getLabel(municipality);
+    const barangayLabel = getLabel(barangay);
+
+    if (!municipalityLabel || !barangayLabel) {
+      return { valid: false, error: 'Municipality and barangay are required' };
+    }
+    if (!crops || crops.length === 0) {
+      return { valid: false, error: 'At least one crop must be selected' };
+    }
+    return { valid: true, municipalityLabel, barangayLabel };
+  };
+
+  const saveAndContinue = async () => {
+    // Validate config first
+    const validation = validateConfig();
+    if (!validation.valid) {
       haptic('warning');
-      Alert.alert('Setup Required', 'Please complete setup first.', [
+      Alert.alert('Setup Required', `${validation.error}. Please complete setup first.`, [
         { text: 'Go to Setup', onPress: () => navigation.navigate('Setup') },
       ]);
       return;
     }
 
-    // Check location suitability
-    const locCheck = isLocationSuitable(location);
-    if (!locCheck.suitable) {
-      haptic('warning');
-      Alert.alert('GPS Issue', locCheck.reason, [
-        { text: 'Save Anyway', onPress: () => performSave() },
-        { text: 'Wait', style: 'cancel' },
-      ]);
+    // Validate captured image exists
+    if (!capturedImage?.uri) {
+      haptic('error');
+      Alert.alert('Error', 'No image to save. Please capture an image first.');
       return;
+    }
+
+    // Check location suitability (only in field mode)
+    if (captureMode === 'field') {
+      const locCheck = isLocationSuitable(location);
+      if (!locCheck.suitable) {
+        haptic('warning');
+        Alert.alert('GPS Issue', locCheck.reason, [
+          { text: 'Save Anyway', onPress: () => performSave() },
+          { text: 'Wait', style: 'cancel' },
+        ]);
+        return;
+      }
     }
 
     await performSave();
   };
 
   const performSave = async () => {
+    // Prevent double-save
+    if (isSaving) {
+      console.log('[CaptureScreen] Save already in progress, ignoring');
+      return;
+    }
+
+    // Extract and validate all required data upfront
     const { municipality, barangay, farmName, crops, deviceId } = config;
+    const municipalityLabel = getLabel(municipality);
+    const barangayLabel = getLabel(barangay);
+
+    // Final validation - failsafe in case called directly
+    if (!municipalityLabel || !barangayLabel) {
+      haptic('error');
+      Alert.alert('Error', 'Configuration is incomplete. Please complete setup.');
+      return;
+    }
+
+    if (!capturedImage?.uri) {
+      haptic('error');
+      Alert.alert('Error', 'No image to save.');
+      return;
+    }
 
     haptic('heavy');
-    // Subtle scale animation (no bounce)
     Animated.sequence([
       Animated.timing(saveScale, { toValue: 0.95, duration: 80, useNativeDriver: true }),
       Animated.timing(saveScale, { toValue: 1, duration: 120, useNativeDriver: true }),
@@ -514,42 +616,33 @@ export default function CaptureScreen({ navigation, route }) {
     try {
       console.log('[CaptureScreen] Starting save process...');
       console.log('[CaptureScreen] Retake mode:', isRetakeMode);
-      console.log('[CaptureScreen] Captured image URI:', capturedImage?.uri?.substring(0, 80));
-      console.log('[CaptureScreen] Image dimensions:', capturedImage?.width, 'x', capturedImage?.height);
+      console.log('[CaptureScreen] Location:', municipalityLabel, '/', barangayLabel);
 
       // Step 1: Generate UUID and filename (use existing UUID if retaking)
       const uuid = isRetakeMode && retakeRecord?.uuid ? retakeRecord.uuid : generateUUID();
-      const filename = generateImageFilename(municipality.label, barangay.label, uuid, farmName);
-      console.log('[CaptureScreen] Using UUID:', uuid);
-      console.log('[CaptureScreen] Generated filename:', filename);
+      const filename = generateImageFilename(municipalityLabel, barangayLabel, uuid, farmName || '');
+      console.log('[CaptureScreen] UUID:', uuid, 'Filename:', filename);
 
-      // Step 2: If retaking, delete the old image first
+      // Step 2: If retaking, delete the old image first (non-blocking)
       if (isRetakeMode && retakeRecord) {
         const oldImagePath = retakeRecord._resolvedImagePath || retakeRecord.image_filename;
         if (oldImagePath) {
-          console.log('[CaptureScreen] Deleting old image:', oldImagePath);
-          try {
-            const fileInfo = await FileSystem.getInfoAsync(oldImagePath);
-            if (fileInfo.exists) {
-              await FileSystem.deleteAsync(oldImagePath);
-              console.log('[CaptureScreen] Old image deleted successfully');
-            }
-          } catch (delErr) {
-            console.warn('[CaptureScreen] Could not delete old image:', delErr.message);
-          }
+          FileSystem.getInfoAsync(oldImagePath)
+            .then(fileInfo => {
+              if (fileInfo.exists) {
+                return FileSystem.deleteAsync(oldImagePath, { idempotent: true });
+              }
+            })
+            .catch(err => console.warn('[CaptureScreen] Old image cleanup failed:', err.message));
         }
       }
 
       // Step 3: Save image to app storage
-      console.log('[CaptureScreen] Saving image to storage...');
-      let imagePath;
-      try {
-        imagePath = await saveImage(capturedImage.uri, filename);
-        console.log('[CaptureScreen] Image saved successfully, path:', imagePath);
-      } catch (imageError) {
-        console.error('[CaptureScreen] Image save failed:', imageError.message);
-        throw new Error(`Image save failed: ${imageError.message}`);
+      const imagePath = await saveImage(capturedImage.uri, filename);
+      if (!imagePath) {
+        throw new Error('Image save returned empty path');
       }
+      console.log('[CaptureScreen] Image saved:', imagePath);
 
       // Step 4: Prepare location data (only for field mode)
       const isFieldMode = captureMode === 'field';
@@ -561,70 +654,54 @@ export default function CaptureScreen({ navigation, route }) {
         gps_accuracy_m: '',
         gps_reading_count: '',
       };
-      console.log('[CaptureScreen] Location data:', JSON.stringify(locationData), 'Mode:', captureMode);
 
-      // Get current orientation at save time
-      const currentOrient = getCurrentOrientation();
-      console.log('[CaptureScreen] Orientation:', JSON.stringify(currentOrient));
+      // Step 5: Get current orientation
+      const currentOrient = getCurrentOrientation() || { pitch: 0, roll: 0, heading: 0 };
 
-      // Step 5: Prepare CSV data
+      // Step 6: Prepare CSV data with all values safely extracted
+      const cropsString = Array.isArray(crops)
+        ? crops.map(c => (c?.id || c || '').toString().toLowerCase()).filter(Boolean).join(',')
+        : '';
+
       const data = {
         uuid,
         spot_number: currentSpot,
         shot_number: currentShot,
         shots_in_spot: shotsPerSpot,
         image_filename: imagePath,
-        image_width: capturedImage.width || '',
-        image_height: capturedImage.height || '',
-        image_quality: imageQuality,
+        image_width: capturedImage.width || 0,
+        image_height: capturedImage.height || 0,
+        image_quality: imageQuality || '1080p',
         capture_datetime: new Date().toISOString(),
         ...locationData,
-        camera_pitch: currentOrient.pitch,
-        camera_roll: currentOrient.roll,
-        camera_heading: currentOrient.heading,
-        municipality: municipality.label,
-        barangay: barangay.label,
+        camera_pitch: currentOrient.pitch ?? 0,
+        camera_roll: currentOrient.roll ?? 0,
+        camera_heading: currentOrient.heading ?? 0,
+        municipality: municipalityLabel,
+        barangay: barangayLabel,
         farm_name: farmName || '',
-        crops: crops.map((c) => c.id.toLowerCase()).join(','),
-        // Temperature and humidity only in field mode
+        crops: cropsString,
         temperature_c: isFieldMode ? (weather?.temperature?.toFixed(1) || '') : '',
-        humidity_percent: isFieldMode ? (weather?.humidity || '') : '',
-        // Sanitize notes: replace newlines with spaces to prevent CSV parsing issues
+        humidity_percent: isFieldMode ? (weather?.humidity ?? '') : '',
         notes: (notes || '').replace(/[\r\n]+/g, ' ').trim(),
         device_id: deviceId || '',
-        capture_mode: captureMode,
+        capture_mode: captureMode || 'field',
       };
-      console.log('[CaptureScreen] CSV data prepared, uuid:', data.uuid);
 
-      // Step 6: Append to CSV or update existing row (for retake)
+      // Step 7: Save to CSV (update or append)
       if (isRetakeMode && retakeRecord?.uuid) {
-        console.log('[CaptureScreen] Updating existing CSV row...');
-        try {
-          const updateResult = await updateCSVRow(retakeRecord.uuid, data);
-          if (!updateResult.success) {
-            throw new Error(updateResult.error || 'Update failed');
-          }
-          console.log('[CaptureScreen] CSV update successful');
-        } catch (csvError) {
-          console.error('[CaptureScreen] CSV update failed:', csvError.message);
-          throw new Error(`CSV update failed: ${csvError.message}`);
+        const updateResult = await updateCSVRow(retakeRecord.uuid, data);
+        if (!updateResult.success) {
+          throw new Error(updateResult.error || 'CSV update failed');
         }
       } else {
-        console.log('[CaptureScreen] Appending to CSV...');
-        try {
-          await appendToCSV(data);
-          console.log('[CaptureScreen] CSV append successful');
-        } catch (csvError) {
-          console.error('[CaptureScreen] CSV append failed:', csvError.message);
-          throw new Error(`CSV save failed: ${csvError.message}`);
-        }
+        await appendToCSV(data);
       }
 
-      // Save completed successfully
       console.log('[CaptureScreen] Save completed successfully!');
       haptic('success');
 
-      // If retake mode, go back to Review screen
+      // Handle retake mode - return to Review screen
       if (isRetakeMode) {
         setIsRetakeMode(false);
         setRetakeRecord(null);
@@ -632,18 +709,15 @@ export default function CaptureScreen({ navigation, route }) {
         return;
       }
 
-      // Update shot counter - find next available slot (handles gaps from deletions)
-      const shotInfo = await getNextAvailableShot(currentSpot, shotsPerSpot);
+      // Update shot counter for next capture
+      const shotInfo = await getNextAvailableShot(currentSpot, shotsPerSpot, municipalityLabel, barangayLabel);
       if (shotInfo.isComplete) {
-        // Current spot is now complete, move to next spot
         const nextSpot = currentSpot + 1;
         setCurrentSpot(nextSpot);
-        const nextSpotInfo = await getNextAvailableShot(nextSpot, shotsPerSpot);
-        setCurrentShot(nextSpotInfo.nextShot);
-        console.log('[CaptureScreen] Spot complete, moved to spot', nextSpot, 'shot', nextSpotInfo.nextShot);
+        const nextSpotInfo = await getNextAvailableShot(nextSpot, shotsPerSpot, municipalityLabel, barangayLabel);
+        setCurrentShot(nextSpotInfo.nextShot || 1);
       } else {
-        setCurrentShot(shotInfo.nextShot);
-        console.log('[CaptureScreen] Next shot:', shotInfo.nextShot);
+        setCurrentShot(shotInfo.nextShot || 1);
       }
 
       // Reset for next capture
@@ -651,18 +725,19 @@ export default function CaptureScreen({ navigation, route }) {
       setNotes('');
       setShowNotes(false);
       setStep('camera');
+
     } catch (error) {
       haptic('error');
-      console.error('[CaptureScreen] Save error:', error.message);
-      console.error('[CaptureScreen] Full error:', error);
+      console.error('[CaptureScreen] Save error:', error);
       Alert.alert(
         'Save Failed',
-        `Could not save the capture.\n\nError: ${error.message}\n\nPlease try again or check app permissions.`,
+        `Could not save the capture.\n\nError: ${error.message || 'Unknown error'}\n\nPlease try again.`,
         [{ text: 'OK' }]
       );
+    } finally {
+      // Always reset saving state
+      setIsSaving(false);
     }
-
-    setIsSaving(false);
   };
 
   // Permission states
