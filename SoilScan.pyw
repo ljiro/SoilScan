@@ -21,5 +21,5 @@ else:
     python_exe = sys.executable
 
 # Run the GUI
-gui_script = script_dir / "soilscan_gui.py"
+gui_script = script_dir / "soilscan_lite.py"
 subprocess.Popen([python_exe, str(gui_script)], cwd=str(script_dir))

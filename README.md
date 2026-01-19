@@ -8,74 +8,114 @@ A GUI application for removing backgrounds from soil sample images. Designed for
 2. **Double-click** `Setup.bat` (first time only - installs dependencies)
 3. **Double-click** `SoilScan.pyw` to launch
 
-## Two Modes
-
-### Normal Mode (Processing)
-Select a folder like `SF-AgriCapture_20260117` → Automatically processes images and saves to `C-SF-AgriCapture_20260117`
-
-### Correction Mode (Manual Fix)
-Select a folder starting with `C-` (like `C-SF-AgriCapture_20260117`) → App detects this and enters correction mode for manual cropping fixes
-
 ## Features
 
-- **AI Background Removal** - Automatic detection and removal using deep learning
-- **Archive Support** - Open .7z and .zip files directly (auto-extracts)
-- **Manual Crop Tool** - Fix misidentified images with click-and-drag selection
-- **Browse Original** - Manually locate source images when auto-detection fails
-- **Smart Mode Detection** - Automatically switches between processing and correction modes
-- **Side-by-Side Preview** - Compare original and cropped images
-- **Batch Processing** - Process entire folders with progress tracking
-- **Auto-Replacement** - Manual corrections overwrite auto-cropped versions
+### Processing Modes
+
+| Mode | Use Case | Description |
+|------|----------|-------------|
+| **AI Full** | Controlled environment (white bag) | Automatic AI background removal |
+| **AI + Lasso** | Controlled environment | Draw selection, AI removes background within |
+| **ZOOM EDIT** | Detailed work | Fullscreen editing with AI support |
+| **FIELD MODE** | Outdoor/field images | Manual lasso or box selection (no AI) |
+
+### Result Editor
+Click on any processed result to edit:
+- **RESTORE** brush - Bring back parts from original image
+- **REMOVE** brush - Erase/make transparent
+- **RESTORE ORIGINAL** - Replace with full original image
+- **Color traces** - Green (restored) / Red (removed) showing edits
+
+### Other Features
+- **GPU Acceleration** - Auto-detects DirectML (AMD/Intel) or CUDA (NVIDIA)
+- **CPU/GPU Toggle** - Switch processing mode on the fly
+- **Dynamic Resizing** - Images scale with window size
+- **Position Counter** - Shows current image number (X/Y)
+- **Consistent Dimensions** - All outputs maintain original image size
 
 ## Workflow
 
-### Processing New Images
+### Processing New Images (Controlled Environment)
 ```
-1. Launch SoilScan.pyw
-2. Click "Browse" and select:
-   - A folder (e.g., SF-AgriCapture_20260117), OR
-   - An archive file (e.g., SF-AgriCapture_20260117.7z) - auto-extracts!
-3. Click "Process All Images"
-4. Wait for completion
-5. Output saved to C-{folder_name}
+1. Launch SoilScan
+2. Click "Open Folder" and select image folder
+3. For each image:
+   - Use "AI Full" for automatic processing, OR
+   - Draw lasso + click "AI + Lasso" for selective processing
+4. Output saved to C-{folder_name}
 ```
 
-### Correcting Bad Crops
+### Processing Field Images
 ```
-1. Launch SoilScan.pyw
-2. Click "Browse" and select the C- folder (e.g., C-SF-AgriCapture_20260117)
-3. App enters CORRECTION MODE (orange banner)
-4. Click on any image to view
-5. Draw rectangle around soil in the Manual Crop area
-6. Click "Apply Manual Crop" - replaces the auto-cropped version
-7. App auto-advances to next image
+1. Launch SoilScan
+2. Click "Open Folder" and select image folder
+3. For each image:
+   - Click "FIELD MODE"
+   - Choose LASSO or BOX selection
+   - Draw around soil sample on shovel
+   - Click "Apply & Save"
+```
+
+### Editing Results
+```
+1. Click on the Result preview (shows hand cursor)
+2. Use RESTORE brush to bring back original pixels
+3. Use REMOVE brush to erase unwanted areas
+4. Click "Apply & Save" when done
 ```
 
 ## Naming Convention
 
-| You Select | Mode | Output |
-|------------|------|--------|
-| `SF-AgriCapture_20260117` | Normal | `C-SF-AgriCapture_20260117` |
-| `C-SF-AgriCapture_20260117` | Correction | Same folder (replaces files) |
+| You Select | Output |
+|------------|--------|
+| `SF-AgriCapture_20260117` | `C-SF-AgriCapture_20260117` |
 
 ## File Structure
 
 ```
 SoilScan/
-├── SoilScan.pyw          # Double-click to launch (no console)
-├── Setup.bat             # First-time setup (install dependencies)
-├── soilscan_gui.py       # Main application
-├── soil_bg_remover.py    # CLI tool (optional)
-├── SoilScan.bat          # Terminal UI (optional)
-├── requirements.txt      # Dependencies
-└── README.md             # This file
+├── SoilScan.pyw              # Double-click to launch (no console)
+├── SoilScan.bat              # Launch with console (for debugging)
+├── Setup.bat                 # First-time setup
+├── soilscan_lite.py          # Main GUI application
+├── soil_bg_remover.py        # CLI tool (basic)
+├── soil_bg_remover_optimized.py  # CLI tool (parallel processing)
+├── soil_bg_remover_turbo.py  # CLI tool (max speed)
+├── logo.png                  # Application icon
+├── requirements.txt          # Dependencies
+└── README.md                 # This file
+```
+
+## CLI Tools
+
+### Basic Processing
+```bash
+python soil_bg_remover.py -i input_folder
+```
+
+### Parallel Processing (4-8x faster)
+```bash
+python soil_bg_remover_optimized.py -i input_folder --workers 8
+```
+
+### Maximum Speed (GPU optimized)
+```bash
+python soil_bg_remover_turbo.py -i input_folder --model u2netp
 ```
 
 ## Requirements
 
 - Windows 10/11
-- Python 3.8+ (download from python.org)
+- Python 3.8+
 - ~500MB for AI models (auto-downloaded)
+
+## GPU Support
+
+| GPU Type | Provider | Installation |
+|----------|----------|--------------|
+| AMD Radeon | DirectML | `pip install onnxruntime-directml` |
+| NVIDIA | CUDA | `pip install onnxruntime-gpu` |
+| Intel | DirectML | `pip install onnxruntime-directml` |
 
 ## Troubleshooting
 
@@ -85,14 +125,12 @@ SoilScan/
 
 **App won't start**
 - Run `Setup.bat` first
-- Try: `python soilscan_gui.py` in terminal to see errors
+- Try: `python soilscan_lite.py` in terminal to see errors
 
 **Processing is slow**
 - First run downloads AI models (~150MB)
-- Enable GPU: `pip install rembg[gpu]` (requires NVIDIA + CUDA)
-
-**Poor edge quality**
-- Check "Alpha Matting" option (slower but better)
+- Check GPU detection in top bar
+- Click GPU/CPU button to toggle
 
 ## License
 
