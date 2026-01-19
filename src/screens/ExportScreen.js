@@ -40,6 +40,11 @@ export default function ExportScreen({ navigation }) {
   const [isExportingZip, setIsExportingZip] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
 
+  // Municipality selection state
+  const [availableMunicipalities, setAvailableMunicipalities] = useState([]);
+  const [selectedMunicipalities, setSelectedMunicipalities] = useState([]);
+  const [municipalityStats, setMunicipalityStats] = useState({});
+
   // Animation values
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentSlide = useRef(new Animated.Value(30)).current;
@@ -82,6 +87,34 @@ export default function ExportScreen({ navigation }) {
       const recordCount = Math.max(0, rows.length - 1);
 
       logDebug(`CSV record count: ${recordCount} (total rows: ${rows.length})`);
+
+      // Extract municipalities and their stats
+      if (rows.length > 1) {
+        const headers = rows[0];
+        const municipalityIndex = headers.indexOf('municipality');
+        const muniStats = {};
+
+        for (let i = 1; i < rows.length; i++) {
+          const municipality = rows[i][municipalityIndex] || 'Unknown';
+          if (!muniStats[municipality]) {
+            muniStats[municipality] = { records: 0 };
+          }
+          muniStats[municipality].records++;
+        }
+
+        const muniList = Object.keys(muniStats).sort();
+        setAvailableMunicipalities(muniList);
+        setMunicipalityStats(muniStats);
+
+        // Select all by default
+        setSelectedMunicipalities(muniList);
+
+        logDebug('Municipality stats:', muniStats);
+      } else {
+        setAvailableMunicipalities([]);
+        setSelectedMunicipalities([]);
+        setMunicipalityStats({});
+      }
 
       // Get CSV file size
       const csvPath = getCSVPath();
@@ -215,6 +248,56 @@ export default function ExportScreen({ navigation }) {
     return images;
   };
 
+  /**
+   * Group CSV records by municipality
+   * @param {Array<Array<string>>} rows - Parsed CSV rows (including header)
+   * @returns {Object} Records grouped by municipality
+   */
+  const groupRecordsByMunicipality = (rows) => {
+    if (rows.length <= 1) return {};
+
+    const headers = rows[0];
+    const municipalityIndex = headers.indexOf('municipality');
+    const grouped = {};
+
+    // Skip header row, process data rows
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const municipality = row[municipalityIndex] || 'Unknown';
+
+      if (!grouped[municipality]) {
+        grouped[municipality] = [];
+      }
+      grouped[municipality].push(row);
+    }
+
+    logDebug('Grouped records by municipality:', Object.keys(grouped).map(m => `${m}: ${grouped[m].length} records`));
+    return grouped;
+  };
+
+  /**
+   * Build CSV content from rows
+   * @param {Array<string>} headers - CSV headers
+   * @param {Array<Array<string>>} dataRows - Data rows (without header)
+   * @returns {string} CSV content string
+   */
+  const buildCSVContent = (headers, dataRows) => {
+    const csvLines = [headers.join(',')];
+
+    for (const row of dataRows) {
+      const csvRow = row.map(val => {
+        const strVal = String(val || '');
+        if (strVal.includes(',') || strVal.includes('"') || strVal.includes('\n')) {
+          return `"${strVal.replace(/"/g, '""')}"`;
+        }
+        return strVal;
+      }).join(',');
+      csvLines.push(csvRow);
+    }
+
+    return csvLines.join('\n') + '\n';
+  };
+
   const exportZip = async () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -228,7 +311,7 @@ export default function ExportScreen({ navigation }) {
     try {
       const zip = new JSZip();
 
-      // Add CSV file
+      // Read and parse CSV
       const csvPath = getCSVPath();
       const csvInfo = await FileSystem.getInfoAsync(csvPath);
 
@@ -239,36 +322,107 @@ export default function ExportScreen({ navigation }) {
       }
 
       const csvContent = await FileSystem.readAsStringAsync(csvPath);
-      zip.file('agricapture_data.csv', csvContent);
-      setExportProgress(10);
+      const rows = parseCSVContent(csvContent);
+
+      if (rows.length <= 1) {
+        Alert.alert('No Data', 'No data to export yet. Capture some photos first.');
+        setIsExportingZip(false);
+        return;
+      }
+
+      const headers = rows[0];
+      const imageFilenameIndex = headers.indexOf('image_filename');
+
+      // Group records by municipality
+      const allGroupedRecords = groupRecordsByMunicipality(rows);
+
+      // Filter to only selected municipalities
+      const groupedRecords = {};
+      for (const municipality of selectedMunicipalities) {
+        if (allGroupedRecords[municipality]) {
+          groupedRecords[municipality] = allGroupedRecords[municipality];
+        }
+      }
+
+      const municipalities = Object.keys(groupedRecords);
+
+      if (municipalities.length === 0) {
+        Alert.alert('No Selection', 'Please select at least one municipality to export.');
+        setIsExportingZip(false);
+        return;
+      }
+
+      logDebug(`Exporting ${municipalities.length} selected municipalities`);
+      setExportProgress(5);
 
       // Animate progress bar
       Animated.timing(progressWidth, {
-        toValue: 10,
+        toValue: 5,
         duration: 200,
         useNativeDriver: false,
       }).start();
+
+      // Create a map of image filenames to their municipality for quick lookup
+      const imageToMunicipality = {};
+      for (const [municipality, records] of Object.entries(groupedRecords)) {
+        for (const record of records) {
+          const imageFilename = record[imageFilenameIndex];
+          if (imageFilename) {
+            imageToMunicipality[imageFilename] = municipality;
+          }
+        }
+      }
+
+      // Add CSV files per municipality (5-15% progress)
+      let municipalityProgress = 0;
+      for (const municipality of municipalities) {
+        const records = groupedRecords[municipality];
+        const municipalityCsvContent = buildCSVContent(headers, records);
+
+        // Create municipality folder and add CSV
+        const municipalityFolder = zip.folder(municipality);
+        municipalityFolder.file('agricapture_data.csv', municipalityCsvContent);
+
+        municipalityProgress++;
+        const progress = 5 + (municipalityProgress / municipalities.length) * 10;
+        setExportProgress(Math.round(progress));
+
+        Animated.timing(progressWidth, {
+          toValue: progress,
+          duration: 100,
+          useNativeDriver: false,
+        }).start();
+      }
+
+      logDebug('CSV files created for all municipalities');
 
       // Collect all images
       const images = await collectAllImages(getImagesDir());
       const totalImages = images.length;
 
-      if (totalImages > 0) {
-        const imagesFolder = zip.folder('images');
+      logDebug(`Found ${totalImages} images to process`);
 
+      if (totalImages > 0) {
         for (let i = 0; i < images.length; i++) {
           const { path, relativePath } = images[i];
+
+          // Extract filename from path to find municipality
+          const filename = path.split('/').pop();
+          const municipality = imageToMunicipality[relativePath] || imageToMunicipality[filename] || 'Unknown';
 
           // Read image as base64
           const imageData = await FileSystem.readAsStringAsync(path, {
             encoding: FileSystem.EncodingType.Base64,
           });
 
-          // Add to zip with folder structure preserved
+          // Add to zip under municipality folder with structure preserved
+          // Structure: {Municipality}/images/{date_path}/{filename}
+          const municipalityFolder = zip.folder(municipality);
+          const imagesFolder = municipalityFolder.folder('images');
           imagesFolder.file(relativePath, imageData, { base64: true });
 
-          // Update progress (10-90% for images)
-          const progress = 10 + ((i + 1) / totalImages) * 80;
+          // Update progress (15-90% for images)
+          const progress = 15 + ((i + 1) / totalImages) * 75;
           setExportProgress(Math.round(progress));
 
           Animated.timing(progressWidth, {
@@ -287,7 +441,8 @@ export default function ExportScreen({ navigation }) {
       }).start();
 
       // Generate ZIP file
-      const zipContent = await zip.generateAsync({ type: 'base64' });
+      logDebug('Generating ZIP file...');
+      const zipFileContent = await zip.generateAsync({ type: 'base64' });
 
       // Create timestamp for filename
       const now = new Date();
@@ -295,16 +450,16 @@ export default function ExportScreen({ navigation }) {
 
       // Write ZIP file
       const zipPath = `${FileSystem.cacheDirectory}AgriCapture_${timestamp}.zip`;
-      await FileSystem.writeAsStringAsync(zipPath, zipContent, {
+      await FileSystem.writeAsStringAsync(zipPath, zipFileContent, {
         encoding: FileSystem.EncodingType.Base64,
       });
 
       // Verify ZIP file was created successfully
-      const zipInfo = await FileSystem.getInfoAsync(zipPath);
-      if (!zipInfo.exists || zipInfo.size === 0) {
+      const zipFileInfo = await FileSystem.getInfoAsync(zipPath);
+      if (!zipFileInfo.exists || zipFileInfo.size === 0) {
         throw new Error('Failed to create ZIP file - file is empty or does not exist');
       }
-      logDebug('ZIP file created successfully', { path: zipPath, size: zipInfo.size });
+      logDebug('ZIP file created successfully', { path: zipPath, size: zipFileInfo.size, municipalities: municipalities.length });
 
       setExportProgress(100);
       Animated.timing(progressWidth, {
@@ -401,6 +556,28 @@ export default function ExportScreen({ navigation }) {
     outputRange: ['0%', '100%'],
   });
 
+  // Toggle a single municipality selection
+  const toggleMunicipality = (municipality) => {
+    setSelectedMunicipalities(prev => {
+      if (prev.includes(municipality)) {
+        return prev.filter(m => m !== municipality);
+      }
+      return [...prev, municipality];
+    });
+  };
+
+  // Select or deselect all municipalities
+  const toggleAllMunicipalities = () => {
+    if (selectedMunicipalities.length === availableMunicipalities.length) {
+      setSelectedMunicipalities([]);
+    } else {
+      setSelectedMunicipalities([...availableMunicipalities]);
+    }
+  };
+
+  // Calculate selected stats
+  const selectedRecordCount = selectedMunicipalities.reduce((sum, m) => sum + (municipalityStats[m]?.records || 0), 0);
+
   return (
     <View style={styles.wrapper}>
       {/* Header */}
@@ -439,6 +616,64 @@ export default function ExportScreen({ navigation }) {
           </View>
         </View>
 
+        {/* Municipality Selection */}
+        {availableMunicipalities.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="location-outline" size={22} color={colors.primary} />
+              <Text style={styles.sectionTitle}>Select Municipalities</Text>
+            </View>
+            <Text style={styles.sectionDescription}>
+              Choose which municipalities to include in the export. Each will have its own folder with CSV and images.
+            </Text>
+
+            {/* Select All Toggle */}
+            <TouchableOpacity
+              style={styles.selectAllRow}
+              onPress={toggleAllMunicipalities}
+            >
+              <View style={[
+                styles.checkbox,
+                selectedMunicipalities.length === availableMunicipalities.length && styles.checkboxSelected
+              ]}>
+                {selectedMunicipalities.length === availableMunicipalities.length && (
+                  <Ionicons name="checkmark" size={14} color={colors.text.inverse} />
+                )}
+              </View>
+              <Text style={styles.selectAllText}>
+                {selectedMunicipalities.length === availableMunicipalities.length ? 'Deselect All' : 'Select All'}
+              </Text>
+              <Text style={styles.selectedCount}>
+                {selectedMunicipalities.length}/{availableMunicipalities.length} selected
+              </Text>
+            </TouchableOpacity>
+
+            {/* Municipality List */}
+            <View style={styles.municipalityList}>
+              {availableMunicipalities.map((municipality) => (
+                <TouchableOpacity
+                  key={municipality}
+                  style={styles.municipalityItem}
+                  onPress={() => toggleMunicipality(municipality)}
+                >
+                  <View style={[
+                    styles.checkbox,
+                    selectedMunicipalities.includes(municipality) && styles.checkboxSelected
+                  ]}>
+                    {selectedMunicipalities.includes(municipality) && (
+                      <Ionicons name="checkmark" size={14} color={colors.text.inverse} />
+                    )}
+                  </View>
+                  <Text style={styles.municipalityName}>{municipality}</Text>
+                  <Text style={styles.municipalityRecords}>
+                    {municipalityStats[municipality]?.records || 0} records
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
         {/* Google Drive Export */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -446,17 +681,17 @@ export default function ExportScreen({ navigation }) {
             <Text style={styles.sectionTitle}>Export to Google Drive</Text>
           </View>
           <Text style={styles.sectionDescription}>
-            Create a ZIP file containing all CSV data and images, then upload to your Google Drive for backup.
+            Create a ZIP file organized by municipality, each with its own CSV and images folder.
           </Text>
 
           <TouchableOpacity
             style={[
               styles.exportButton,
               styles.zipButton,
-              (isExportingZip || stats.records === 0) && styles.disabled,
+              (isExportingZip || selectedMunicipalities.length === 0) && styles.disabled,
             ]}
             onPress={exportZip}
-            disabled={isExportingZip || stats.records === 0}
+            disabled={isExportingZip || selectedMunicipalities.length === 0}
           >
             {isExportingZip ? (
               <View style={styles.progressContainer}>
@@ -482,8 +717,12 @@ export default function ExportScreen({ navigation }) {
                   <Ionicons name="archive-outline" size={24} color={colors.text.inverse} />
                 </View>
                 <View style={styles.exportTextContainer}>
-                  <Text style={styles.exportButtonText}>Export All (ZIP)</Text>
-                  <Text style={styles.exportSubtext}>CSV + {stats.images} images ({stats.imagesSize} MB)</Text>
+                  <Text style={styles.exportButtonText}>
+                    Export Selected ({selectedMunicipalities.length})
+                  </Text>
+                  <Text style={styles.exportSubtext}>
+                    {selectedRecordCount} records from {selectedMunicipalities.length} municipalities
+                  </Text>
                 </View>
                 <Ionicons name="share-outline" size={22} color={colors.text.inverse} />
               </>
@@ -785,5 +1024,64 @@ const styles = StyleSheet.create({
     color: colors.text.tertiary,
     textAlign: 'center',
     marginTop: spacing.sm,
+  },
+  // Municipality selection styles
+  selectAllRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.background.secondary,
+    borderRadius: radius.md,
+    marginBottom: spacing.md,
+  },
+  selectAllText: {
+    flex: 1,
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+    color: colors.text.primary,
+    marginLeft: spacing.sm,
+  },
+  selectedCount: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    color: colors.text.secondary,
+  },
+  municipalityList: {
+    gap: spacing.xs,
+  },
+  municipalityItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.background.secondary,
+    borderRadius: radius.md,
+  },
+  municipalityName: {
+    flex: 1,
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    color: colors.text.primary,
+    marginLeft: spacing.sm,
+  },
+  municipalityRecords: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    color: colors.text.secondary,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: radius.sm,
+    borderWidth: 2,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background.primary,
+  },
+  checkboxSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
 });
