@@ -14,6 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { saveConfig, loadConfig, initStorage } from '../services/storageService';
+import { isSAFInitialized, getStorageLocationInfo, resetSAF, initializeSAF } from '../services/publicStorageService';
 import { generateUUID } from '../utils/uuid';
 import * as Device from 'expo-device';
 import { MUNICIPALITIES, BARANGAYS } from '../constants/locations';
@@ -48,6 +49,11 @@ export default function SetupScreen() {
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Storage settings
+  const [storageEnabled, setStorageEnabled] = useState(false);
+  const [storagePath, setStoragePath] = useState('Not configured');
+  const [isChangingStorage, setIsChangingStorage] = useState(false);
 
   // Store initial values for comparison
   const initialConfig = useRef(null);
@@ -153,10 +159,83 @@ export default function SetupScreen() {
     );
   };
 
+  const loadStorageInfo = async () => {
+    try {
+      const enabled = await isSAFInitialized();
+      setStorageEnabled(enabled);
+      if (enabled) {
+        const info = await getStorageLocationInfo();
+        setStoragePath(info.displayPath || 'Unknown location');
+      } else {
+        setStoragePath('Not configured');
+      }
+    } catch (error) {
+      console.error('Error loading storage info:', error);
+      setStorageEnabled(false);
+      setStoragePath('Error loading');
+    }
+  };
+
+  const handleChangeStorageFolder = async () => {
+    Alert.alert(
+      'Change Storage Folder',
+      'This will let you select a new folder for saving files. Your existing files will remain in the old location.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Choose New Folder',
+          onPress: async () => {
+            setIsChangingStorage(true);
+            try {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              await resetSAF();
+              const result = await initializeSAF();
+              if (result.success) {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                await loadStorageInfo();
+                Alert.alert('Success', 'Storage folder updated successfully!');
+              } else {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+                Alert.alert('Error', result.error || 'Failed to set up storage folder');
+              }
+            } catch (error) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              Alert.alert('Error', error.message || 'Failed to change storage folder');
+            }
+            setIsChangingStorage(false);
+          },
+        },
+      ]
+    );
+  };
+
+  const handleSetupStorage = async () => {
+    setIsChangingStorage(true);
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const result = await initializeSAF();
+      if (result.success) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        await loadStorageInfo();
+        Alert.alert('Success', 'Public storage is now enabled! Files will be saved to your selected folder.');
+      } else {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert('Setup Cancelled', result.error || 'Storage setup was cancelled');
+      }
+    } catch (error) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Error', error.message || 'Failed to set up storage');
+    }
+    setIsChangingStorage(false);
+  };
+
   const loadExistingConfig = async () => {
     try {
       // Ensure storage is initialized first
       await initStorage();
+
+      // Load storage info
+      await loadStorageInfo();
 
       const config = await loadConfig('user_config');
 
@@ -798,6 +877,81 @@ export default function SetupScreen() {
             </View>
           </View>
 
+          {/* Storage Settings */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="folder-outline" size={18} color={colors.text.secondary} />
+              <Text style={styles.sectionTitle}>Public Storage</Text>
+            </View>
+            <Text style={styles.settingDescription}>
+              Save files to a public folder accessible via file manager and USB.
+            </Text>
+
+            <View style={styles.storageStatus}>
+              <View style={styles.storageStatusRow}>
+                <View style={[
+                  styles.storageIndicator,
+                  storageEnabled ? styles.storageIndicatorEnabled : styles.storageIndicatorDisabled,
+                ]} />
+                <Text style={[
+                  styles.storageStatusText,
+                  storageEnabled ? styles.storageStatusEnabled : styles.storageStatusDisabled,
+                ]}>
+                  {storageEnabled ? 'Enabled' : 'Not Set Up'}
+                </Text>
+              </View>
+
+              {storageEnabled && (
+                <View style={styles.storagePathRow}>
+                  <Ionicons name="folder-open-outline" size={16} color={colors.text.tertiary} />
+                  <Text style={styles.storagePathText} numberOfLines={2}>
+                    {storagePath}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {storageEnabled ? (
+              <TouchableOpacity
+                style={[styles.storageButton, styles.storageButtonChange]}
+                onPress={handleChangeStorageFolder}
+                disabled={isChangingStorage}
+              >
+                {isChangingStorage ? (
+                  <Text style={styles.storageButtonText}>Changing...</Text>
+                ) : (
+                  <>
+                    <Ionicons name="swap-horizontal-outline" size={18} color={colors.secondary} />
+                    <Text style={[styles.storageButtonText, { color: colors.secondary }]}>
+                      Change Folder
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.storageButton, styles.storageButtonSetup]}
+                onPress={handleSetupStorage}
+                disabled={isChangingStorage}
+              >
+                {isChangingStorage ? (
+                  <Text style={styles.storageButtonTextWhite}>Setting up...</Text>
+                ) : (
+                  <>
+                    <Ionicons name="add-circle-outline" size={18} color={colors.text.inverse} />
+                    <Text style={styles.storageButtonTextWhite}>Set Up Public Storage</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+
+            {!storageEnabled && (
+              <Text style={styles.storageWarning}>
+                Without public storage, files are only accessible within the app.
+              </Text>
+            )}
+          </View>
+
           {/* Save Button */}
           <TouchableOpacity
             onPress={saveSetup}
@@ -1266,5 +1420,87 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.xs,
     color: colors.primary,
     marginTop: spacing.sm,
+  },
+  // Storage settings styles
+  storageStatus: {
+    backgroundColor: colors.background.secondary,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  storageStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  storageIndicator: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  storageIndicatorEnabled: {
+    backgroundColor: colors.primary,
+  },
+  storageIndicatorDisabled: {
+    backgroundColor: colors.text.muted,
+  },
+  storageStatusText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.base,
+  },
+  storageStatusEnabled: {
+    color: colors.primary,
+  },
+  storageStatusDisabled: {
+    color: colors.text.tertiary,
+  },
+  storagePathRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  storagePathText: {
+    flex: 1,
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    color: colors.text.secondary,
+  },
+  storageButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.md,
+  },
+  storageButtonSetup: {
+    backgroundColor: colors.primary,
+  },
+  storageButtonChange: {
+    backgroundColor: colors.secondaryLight,
+    borderWidth: 1,
+    borderColor: colors.secondary,
+  },
+  storageButtonText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.sm,
+    color: colors.text.secondary,
+  },
+  storageButtonTextWhite: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.sm,
+    color: colors.text.inverse,
+  },
+  storageWarning: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    color: colors.warning,
+    marginTop: spacing.sm,
+    textAlign: 'center',
   },
 });

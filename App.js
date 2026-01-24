@@ -23,6 +23,7 @@ import SyncScreen from './src/screens/SyncScreen';
 import PermissionOnboarding from './src/screens/PermissionOnboarding';
 import OnboardingGuide from './src/screens/OnboardingGuide';
 import TermsAgreement, { hasAcceptedTerms } from './src/screens/TermsAgreement';
+import SAFPermissionScreen from './src/screens/SAFPermissionScreen';
 import GlassTabBar from './src/components/GlassTabBar';
 import NetworkMonitor from './src/components/NetworkMonitor';
 import { NetworkProvider } from './src/contexts/NetworkContext';
@@ -30,6 +31,7 @@ import { PermissionProvider } from './src/contexts/PermissionContext';
 import { isOnboardingComplete } from './src/services/permissionService';
 import { loadConfig, initializeAppDirectories, clearExpiredCache, verifyAndInitializeStorage } from './src/services/storageService';
 import { initCSV, verifyCSVStorage } from './src/services/csvService';
+import { isSAFInitialized } from './src/services/publicStorageService';
 
 // Keep splash screen visible while loading fonts
 SplashScreen.preventAutoHideAsync();
@@ -40,6 +42,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [showTermsAgreement, setShowTermsAgreement] = useState(false);
   const [showPermissionOnboarding, setShowPermissionOnboarding] = useState(false);
+  const [showSAFPermission, setShowSAFPermission] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
 
   const [fontsLoaded] = useFonts({
@@ -83,7 +86,14 @@ export default function App() {
       // Check if guide has been completed
       if (permissionComplete) {
         const config = await loadConfig('user_config');
-        setShowGuide(!config?.guideCompleted);
+
+        // Check if SAF (public storage) has been set up
+        const safReady = await isSAFInitialized();
+        if (!safReady) {
+          setShowSAFPermission(true);
+        } else {
+          setShowGuide(!config?.guideCompleted);
+        }
       }
     } catch (error) {
       console.error('Error initializing app:', error);
@@ -137,7 +147,16 @@ export default function App() {
     }
 
     setShowPermissionOnboarding(false);
-    // Show guide after permissions are granted
+
+    // Show SAF permission screen after basic permissions are granted
+    setShowSAFPermission(true);
+  };
+
+  const handleSAFComplete = async (enabled) => {
+    console.log('[App] SAF setup complete, enabled:', enabled);
+    setShowSAFPermission(false);
+
+    // Show guide after SAF is set up
     setShowGuide(true);
   };
 
@@ -173,7 +192,17 @@ export default function App() {
     );
   }
 
-  // Show guide after permissions are granted
+  // Show SAF permission screen after basic permissions
+  if (showSAFPermission) {
+    return (
+      <PermissionProvider>
+        <StatusBar style="light" />
+        <SAFPermissionScreen onComplete={handleSAFComplete} />
+      </PermissionProvider>
+    );
+  }
+
+  // Show guide after SAF permissions are granted
   if (showGuide) {
     return (
       <PermissionProvider>

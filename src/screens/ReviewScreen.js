@@ -23,6 +23,8 @@ import { Ionicons } from '@expo/vector-icons';
 // Use legacy API - supported until SDK 55
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
+import * as Sharing from 'expo-sharing';
+import JSZip from 'jszip';
 import { readCSV, deleteFromCSV, updateCSVField, updateCSVRow, parseCSVToRecords } from '../services/csvService';
 import { fonts, fontSizes, colors, radius, spacing, shadows, layout } from '../constants/theme';
 import { getAppRootDir } from '../services/storageService';
@@ -160,11 +162,19 @@ export default function ReviewScreen({ navigation }) {
   // Full record editing state
   const [editingRecord, setEditingRecord] = useState(null);
 
+  // Selection mode state
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedShots, setSelectedShots] = useState(new Set());
+  const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exportStatus, setExportStatus] = useState('');
+
   // Animation values
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentSlide = useRef(new Animated.Value(20)).current;
   const searchBarWidth = useRef(new Animated.Value(0)).current;
   const refreshIndicator = useRef(new Animated.Value(0)).current;
+  const selectionToolbarAnim = useRef(new Animated.Value(0)).current;
 
   // Card animation refs
   const cardAnimations = useRef({}).current;
@@ -596,6 +606,260 @@ export default function ReviewScreen({ navigation }) {
 
   const hasActiveFilters = searchQuery || dateFilter !== 'all' || cropFilter !== 'all' || locationFilter !== 'all' || spotFilter !== 'all';
 
+  // Selection logic functions
+  const toggleShotSelection = useCallback((uuid) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedShots(prev => {
+      const next = new Set(prev);
+      if (next.has(uuid)) {
+        next.delete(uuid);
+      } else {
+        next.add(uuid);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSpotSelection = useCallback((spotNumber, allShotUuids) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const allSelected = allShotUuids.every(uuid => selectedShots.has(uuid));
+    setSelectedShots(prev => {
+      const next = new Set(prev);
+      if (allSelected) {
+        allShotUuids.forEach(uuid => next.delete(uuid));
+      } else {
+        allShotUuids.forEach(uuid => next.add(uuid));
+      }
+      return next;
+    });
+  }, [selectedShots]);
+
+  const selectAllShots = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const allUuids = filteredRecords.map(r => r.uuid);
+    setSelectedShots(new Set(allUuids));
+  }, [filteredRecords]);
+
+  const deselectAllShots = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedShots(new Set());
+  }, []);
+
+  // Delete selected items
+  const deleteSelected = useCallback(() => {
+    if (selectedShots.size === 0) return;
+
+    const count = selectedShots.size;
+    Alert.alert(
+      'Delete Selected',
+      `Are you sure you want to delete ${count} selected record${count !== 1 ? 's' : ''}? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+
+              const selectedArray = Array.from(selectedShots);
+              for (const uuid of selectedArray) {
+                const record = filteredRecords.find(r => r.uuid === uuid);
+                if (record) {
+                  // Delete image file
+                  if (record._resolvedImagePath) {
+                    try {
+                      await FileSystem.deleteAsync(record._resolvedImagePath, { idempotent: true });
+                    } catch (err) {
+                      console.warn('Could not delete image:', err.message);
+                    }
+                  }
+                  // Delete CSV row
+                  await deleteFromCSV(uuid);
+                }
+              }
+
+              // Clear selection and exit selection mode
+              setSelectedShots(new Set());
+              setSelectionMode(false);
+
+              // Refresh data
+              loadRecords();
+
+              Alert.alert('Success', `Deleted ${count} record${count !== 1 ? 's' : ''}`);
+            } catch (error) {
+              console.error('Delete selected error:', error);
+              Alert.alert('Error', 'Failed to delete some records. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  }, [selectedShots, filteredRecords, loadRecords]);
+
+  // Animate selection toolbar
+  useEffect(() => {
+    const shouldShow = selectionMode && selectedShots.size > 0;
+    Animated.timing(selectionToolbarAnim, {
+      toValue: shouldShow ? 1 : 0,
+      duration: 250,
+      useNativeDriver: true,
+      easing: Easing.out(Easing.cubic),
+    }).start();
+  }, [selectionMode, selectedShots.size]);
+
+  // Export selected records as ZIP
+  const exportSelected = async () => {
+    if (selectedShots.size === 0) return;
+
+    setExporting(true);
+    setExportProgress(0);
+    setExportStatus('Preparing data...');
+
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      // 1. Filter records to only selected UUIDs
+      const selectedRecords = records.filter(r => selectedShots.has(r.uuid));
+      setExportProgress(5);
+
+      // 2. Group by municipality for folder structure
+      const groupedRecords = {};
+      selectedRecords.forEach(record => {
+        const municipality = record.municipality || 'Unknown';
+        if (!groupedRecords[municipality]) {
+          groupedRecords[municipality] = [];
+        }
+        groupedRecords[municipality].push(record);
+      });
+      setExportProgress(10);
+
+      // 3. Create ZIP
+      const zip = new JSZip();
+      const csvHeaders = [
+        'uuid', 'spot_number', 'shot_number', 'shots_in_spot', 'image_filename',
+        'image_width', 'image_height', 'image_quality', 'capture_datetime',
+        'latitude', 'longitude', 'altitude_m', 'altitude_accuracy_m', 'gps_accuracy_m',
+        'gps_reading_count', 'camera_pitch', 'camera_roll', 'camera_heading',
+        'municipality', 'barangay', 'farm_name', 'crops', 'temperature_c', 'humidity_percent',
+        'notes', 'device_id', 'capture_mode',
+      ];
+
+      // 4. Process each municipality group
+      const municipalities = Object.keys(groupedRecords);
+      let processedImages = 0;
+      const totalImages = selectedRecords.filter(r => r.image_filename).length;
+
+      for (let i = 0; i < municipalities.length; i++) {
+        const municipality = municipalities[i];
+        const municipalityRecords = groupedRecords[municipality];
+        setExportStatus(`Processing ${municipality}...`);
+
+        // Create municipality folder
+        const folder = zip.folder(municipality);
+
+        // Create CSV for this municipality
+        const csvRows = [csvHeaders.join(',')];
+        municipalityRecords.forEach(record => {
+          const row = csvHeaders.map(header => {
+            const value = record[header] ?? '';
+            // Escape commas and quotes in CSV
+            if (typeof value === 'string' && (value.includes(',') || value.includes('"') || value.includes('\n'))) {
+              return `"${value.replace(/"/g, '""')}"`;
+            }
+            return value;
+          });
+          csvRows.push(row.join(','));
+        });
+        folder.file('agricapture_data.csv', csvRows.join('\n'));
+
+        // Add images
+        const imagesFolder = folder.folder('images');
+        for (const record of municipalityRecords) {
+          if (record.image_filename && record._resolvedImagePath) {
+            try {
+              const imageInfo = await FileSystem.getInfoAsync(record._resolvedImagePath);
+              if (imageInfo.exists) {
+                const imageBase64 = await FileSystem.readAsStringAsync(record._resolvedImagePath, {
+                  encoding: FileSystem.EncodingType.Base64,
+                });
+
+                // Extract date path from filename or create one
+                let imageName = record.image_filename;
+                if (imageName.includes('/')) {
+                  // Keep the date path structure: images/2024/01/15/file.jpg -> 2024/01/15/file.jpg
+                  imageName = imageName.replace(/^images\//, '');
+                }
+
+                imagesFolder.file(imageName, imageBase64, { base64: true });
+              }
+            } catch (imgError) {
+              logDebug(`Error adding image to ZIP: ${imgError.message}`);
+            }
+          }
+          processedImages++;
+          setExportProgress(10 + (processedImages / totalImages) * 70);
+        }
+      }
+
+      setExportProgress(85);
+      setExportStatus('Creating ZIP file...');
+
+      // 5. Generate ZIP
+      const zipContent = await zip.generateAsync({
+        type: 'base64',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 6 },
+      });
+
+      setExportProgress(95);
+      setExportStatus('Preparing to share...');
+
+      // 6. Save to cache and share
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const zipFileName = `AgriCapture_Selected_${timestamp}.zip`;
+      const zipPath = `${FileSystem.cacheDirectory}${zipFileName}`;
+
+      await FileSystem.writeAsStringAsync(zipPath, zipContent, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      setExportProgress(100);
+
+      // Share the file
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(zipPath, {
+          mimeType: 'application/zip',
+          dialogTitle: 'Compile Selected Records',
+        });
+      } else {
+        Alert.alert('Compile Complete', `ZIP saved to: ${zipPath}`);
+      }
+
+      // Cleanup
+      try {
+        await FileSystem.deleteAsync(zipPath, { idempotent: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+
+      // Exit selection mode on success
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setSelectionMode(false);
+      setSelectedShots(new Set());
+
+    } catch (error) {
+      console.error('Compile error:', error);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Compile Failed', error.message || 'An error occurred during compile');
+    } finally {
+      setExporting(false);
+      setExportProgress(0);
+      setExportStatus('');
+    }
+  };
+
   // Get unique crops from records
   const uniqueCrops = useMemo(() => {
     const crops = new Set();
@@ -741,6 +1005,11 @@ export default function ReviewScreen({ navigation }) {
   };
 
   const renderCard = ({ item, index }) => {
+    // Safety check - ensure item exists
+    if (!item || !item.uuid) {
+      return null;
+    }
+
     // Use the pre-resolved path or resolve now
     let imagePath = item._resolvedImagePath || resolveImagePath(item.image_filename);
 
@@ -749,13 +1018,11 @@ export default function ReviewScreen({ navigation }) {
       imagePath = `file://${imagePath}`;
     }
 
-    const imageExists = item._imageExists === true; // Only show image if explicitly verified to exist
     const gpsInfo = getGPSAccuracyInfo(item.gps_accuracy_m);
 
     // Debug logging for image display
     if (index === 0) {
       logDebug('First card image path:', imagePath);
-      logDebug('First card imageExists:', imageExists);
     }
 
     // Initialize animation if needed
@@ -774,11 +1041,13 @@ export default function ReviewScreen({ navigation }) {
     });
 
     const hasWeather = item.temperature_c || item.humidity_percent;
+    const isSelected = selectedShots.has(item.uuid);
 
     return (
       <Animated.View
         style={[
           styles.card,
+          selectionMode && isSelected && styles.cardSelected,
           {
             opacity: contentOpacity,
             transform: [{
@@ -793,13 +1062,29 @@ export default function ReviewScreen({ navigation }) {
         {/* Main Card Content */}
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => toggleCardExpanded(item.id)}
+          onPress={() => {
+            if (selectionMode) {
+              toggleShotSelection(item.uuid);
+            } else {
+              toggleCardExpanded(item.id);
+            }
+          }}
           style={styles.cardTouchable}
         >
           <View style={styles.cardMain}>
+            {/* Selection Checkbox - visual only, card handles the tap */}
+            {selectionMode && (
+              <View style={styles.cardCheckbox}>
+                <Ionicons
+                  name={isSelected ? 'checkbox' : 'square-outline'}
+                  size={24}
+                  color={isSelected ? colors.primary : colors.text.tertiary}
+                />
+              </View>
+            )}
             {/* Thumbnail */}
-            <View style={styles.thumbnailContainer}>
-              {imagePath && imageExists ? (
+            <View style={[styles.thumbnailContainer, selectionMode && styles.thumbnailContainerSelection]}>
+              {imagePath ? (
                 <Image
                   source={{ uri: imagePath }}
                   style={styles.thumbnail}
@@ -876,10 +1161,12 @@ export default function ReviewScreen({ navigation }) {
                   </View>
                 )}
 
-                {/* Expand button */}
-                <Animated.View style={[styles.expandButton, { transform: [{ rotate: rotateArrow }] }]}>
-                  <Ionicons name="chevron-down" size={18} color={colors.text.tertiary} />
-                </Animated.View>
+                {/* Expand button - hidden in selection mode */}
+                {!selectionMode && (
+                  <Animated.View style={[styles.expandButton, { transform: [{ rotate: rotateArrow }] }]}>
+                    <Ionicons name="chevron-down" size={18} color={colors.text.tertiary} />
+                  </Animated.View>
+                )}
               </View>
             </View>
           </View>
@@ -995,20 +1282,44 @@ export default function ReviewScreen({ navigation }) {
     const isExpanded = expandedSpots[section.spot];
     const showDelete = spotShowingDelete === section.spot;
 
+    // Calculate selection state for this spot
+    const spotUuids = section.allData.map(r => r.uuid);
+    const selectedCount = spotUuids.filter(uuid => selectedShots.has(uuid)).length;
+    const allSelected = selectedCount === spotUuids.length && spotUuids.length > 0;
+    const someSelected = selectedCount > 0 && selectedCount < spotUuids.length;
+
     return (
       <TouchableOpacity
         style={[
           styles.sectionHeader,
           isExpanded && styles.sectionHeaderExpanded,
           showDelete && styles.sectionHeaderDelete,
+          selectionMode && someSelected && styles.sectionHeaderPartialSelect,
+          selectionMode && allSelected && styles.sectionHeaderFullSelect,
         ]}
-        onPress={() => toggleSpotExpanded(section.spot)}
-        onLongPress={() => handleSpotLongPress(section.spot)}
+        onPress={() => {
+          if (selectionMode) {
+            // In selection mode, tapping header toggles all items in this spot
+            toggleSpotSelection(section.spot, spotUuids);
+          } else {
+            // Normal mode: expand/collapse
+            toggleSpotExpanded(section.spot);
+          }
+        }}
+        onLongPress={() => !selectionMode && handleSpotLongPress(section.spot)}
         delayLongPress={500}
         activeOpacity={0.7}
       >
         <View style={styles.sectionHeaderLeft}>
-          {showDelete ? (
+          {selectionMode ? (
+            <View style={{ padding: 4 }}>
+              <Ionicons
+                name={allSelected ? 'checkbox' : someSelected ? 'remove-circle' : 'square-outline'}
+                size={24}
+                color={allSelected || someSelected ? colors.primary : colors.text.tertiary}
+              />
+            </View>
+          ) : showDelete ? (
             <Ionicons name="alert-circle" size={24} color={colors.error} />
           ) : (
             <Ionicons
@@ -1022,6 +1333,7 @@ export default function ReviewScreen({ navigation }) {
               styles.sectionTitle,
               isExpanded && styles.sectionTitleExpanded,
               showDelete && styles.sectionTitleDelete,
+              selectionMode && allSelected && styles.sectionTitleSelected,
             ]}
             numberOfLines={1}
           >
@@ -1037,6 +1349,10 @@ export default function ReviewScreen({ navigation }) {
               <Ionicons name="trash" size={16} color={colors.text.inverse} />
               <Text style={styles.spotDeleteButtonText}>Delete All</Text>
             </TouchableOpacity>
+          ) : selectionMode ? (
+            <Text style={styles.sectionSelectCount}>
+              {selectedCount}/{section.count}
+            </Text>
           ) : (
             <>
               <View style={[styles.sectionBadge, isExpanded && styles.sectionBadgeExpanded]}>
@@ -1297,6 +1613,32 @@ export default function ReviewScreen({ navigation }) {
             </View>
             <View style={styles.headerActions}>
               <TouchableOpacity
+                style={[
+                  styles.selectModeButton,
+                  selectionMode && styles.selectModeButtonActive,
+                ]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  if (selectionMode) {
+                    // Exit selection mode
+                    setSelectionMode(false);
+                    setSelectedShots(new Set());
+                  } else {
+                    setSelectionMode(true);
+                  }
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={selectionMode ? 'close' : 'checkbox-outline'}
+                  size={18}
+                  color={colors.text.inverse}
+                />
+                <Text style={styles.selectModeButtonText}>
+                  {selectionMode ? 'Cancel' : 'Select'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
                 style={styles.refreshButton}
                 onPress={onRefresh}
                 disabled={refreshing || loading}
@@ -1431,11 +1773,13 @@ export default function ReviewScreen({ navigation }) {
         ) : (
           <SectionList
             sections={groupedBySpot}
-            keyExtractor={item => item.id}
+            keyExtractor={item => item.uuid}
             renderItem={renderCard}
             renderSectionHeader={renderSectionHeader}
             renderSectionFooter={renderSectionFooter}
             stickySectionHeadersEnabled={false}
+            extraData={`${selectionMode}-${selectedShots.size}-${Array.from(selectedShots).join(',')}`}
+            removeClippedSubviews={false}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -1447,9 +1791,9 @@ export default function ReviewScreen({ navigation }) {
             }
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
-            initialNumToRender={5}
+            initialNumToRender={10}
             maxToRenderPerBatch={10}
-            windowSize={5}
+            windowSize={10}
           />
         )}
       </Animated.View>
@@ -1506,6 +1850,90 @@ export default function ReviewScreen({ navigation }) {
         onClose={() => setEditingRecord(null)}
         onSave={saveEditedRecord}
       />
+
+      {/* Selection Toolbar */}
+      <Animated.View
+        style={[
+          styles.selectionToolbar,
+          {
+            transform: [{
+              translateY: selectionToolbarAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [100, 0],
+              }),
+            }],
+            opacity: selectionToolbarAnim,
+          },
+        ]}
+        pointerEvents={selectionMode && selectedShots.size > 0 ? 'auto' : 'none'}
+      >
+        <View style={styles.selectionToolbarContent}>
+          <Text style={styles.selectionCount}>
+            {selectedShots.size} selected
+          </Text>
+          <View style={styles.selectionActions}>
+            <TouchableOpacity
+              style={styles.selectionActionButton}
+              onPress={selectedShots.size === filteredRecords.length ? deselectAllShots : selectAllShots}
+            >
+              <Ionicons
+                name={selectedShots.size === filteredRecords.length ? 'remove-circle-outline' : 'checkbox-outline'}
+                size={20}
+                color={colors.primary}
+              />
+              <Text style={styles.selectionActionText}>
+                {selectedShots.size === filteredRecords.length ? 'None' : 'All'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.deleteSelectedButton}
+              onPress={deleteSelected}
+            >
+              <Ionicons name="trash-outline" size={20} color={colors.error} />
+              <Text style={styles.deleteSelectedText}>Delete</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.exportSelectedButton}
+              onPress={exportSelected}
+              disabled={exporting}
+            >
+              {exporting ? (
+                <ActivityIndicator size="small" color={colors.text.inverse} />
+              ) : (
+                <>
+                  <Ionicons name="construct-outline" size={20} color={colors.text.inverse} />
+                  <Text style={styles.exportSelectedText}>Compile</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Animated.View>
+
+      {/* Compile Progress Modal */}
+      <Modal
+        visible={exporting}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {}}
+      >
+        <View style={styles.exportModalOverlay}>
+          <View style={styles.exportModalContent}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={styles.exportProgressTitle}>Compiling...</Text>
+            <Text style={styles.exportProgressStatus}>{exportStatus}</Text>
+            <View style={styles.exportProgressBarContainer}>
+              <View
+                style={[
+                  styles.exportProgressBar,
+                  { width: `${exportProgress}%` },
+                ]}
+              />
+            </View>
+            <Text style={styles.exportProgressPercent}>{Math.round(exportProgress)}%</Text>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -2229,5 +2657,179 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: fontSizes.sm,
     color: colors.secondary,
+  },
+  // Selection Mode Styles
+  selectModeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  selectModeButtonActive: {
+    backgroundColor: 'rgba(255,255,255,0.3)',
+  },
+  selectModeButtonText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+    color: colors.text.inverse,
+  },
+  // Card Selection Styles
+  cardSelected: {
+    borderWidth: 2,
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryLight,
+  },
+  cardCheckbox: {
+    position: 'absolute',
+    top: spacing.sm,
+    left: spacing.sm,
+    zIndex: 10,
+    backgroundColor: colors.background.primary,
+    borderRadius: radius.sm,
+    padding: 2,
+  },
+  thumbnailContainerSelection: {
+    marginLeft: 0,
+  },
+  // Section Header Selection Styles
+  sectionHeaderPartialSelect: {
+    borderLeftColor: colors.primary,
+    backgroundColor: `${colors.primary}10`,
+  },
+  sectionHeaderFullSelect: {
+    borderLeftColor: colors.primary,
+    backgroundColor: colors.primaryLight,
+  },
+  sectionTitleSelected: {
+    color: colors.primary,
+    fontFamily: fonts.semiBold,
+  },
+  sectionSelectCount: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+    color: colors.primary,
+  },
+  // Selection Toolbar Styles
+  selectionToolbar: {
+    position: 'absolute',
+    bottom: 80, // Position above the tab bar
+    left: spacing.md,
+    right: spacing.md,
+    backgroundColor: colors.background.primary,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.lg,
+  },
+  selectionToolbarContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  selectionCount: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.base,
+    color: colors.text.primary,
+  },
+  selectionActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  selectionActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
+    backgroundColor: colors.primaryLight,
+  },
+  selectionActionText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.xs,
+    color: colors.primary,
+  },
+  deleteSelectedButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(255, 59, 48, 0.15)',
+    borderWidth: 1,
+    borderColor: colors.error,
+  },
+  deleteSelectedText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.xs,
+    color: colors.error,
+  },
+  exportSelectedButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+  },
+  exportSelectedText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.xs,
+    color: colors.text.inverse,
+  },
+  // Export Progress Modal Styles
+  exportModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  exportModalContent: {
+    backgroundColor: colors.background.primary,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    alignItems: 'center',
+    width: '80%',
+    maxWidth: 300,
+  },
+  exportProgressTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.lg,
+    color: colors.text.primary,
+    marginTop: spacing.md,
+  },
+  exportProgressStatus: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    color: colors.text.secondary,
+    marginTop: spacing.xs,
+    textAlign: 'center',
+  },
+  exportProgressBarContainer: {
+    width: '100%',
+    height: 6,
+    backgroundColor: colors.background.tertiary,
+    borderRadius: radius.full,
+    marginTop: spacing.lg,
+    overflow: 'hidden',
+  },
+  exportProgressBar: {
+    height: '100%',
+    backgroundColor: colors.primary,
+    borderRadius: radius.full,
+  },
+  exportProgressPercent: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+    color: colors.text.secondary,
+    marginTop: spacing.sm,
   },
 });

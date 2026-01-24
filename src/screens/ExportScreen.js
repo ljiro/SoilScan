@@ -19,6 +19,7 @@ import * as Haptics from 'expo-haptics';
 import JSZip from 'jszip';
 import { getCSVPath, readCSV, parseCSVContent } from '../services/csvService';
 import { getImagesDir } from '../services/storageService';
+import { isSAFInitialized, getStorageLocationInfo } from '../services/publicStorageService';
 import { fonts, fontSizes, colors, radius, spacing, shadows, layout } from '../constants/theme';
 
 // Debug logging helper - __DEV__ is a React Native global
@@ -39,6 +40,11 @@ export default function ExportScreen({ navigation }) {
   const [isExporting, setIsExporting] = useState(false);
   const [isExportingZip, setIsExportingZip] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [exportStatus, setExportStatus] = useState('');
+
+  // SAF status
+  const [safEnabled, setSafEnabled] = useState(false);
+  const [storagePath, setStoragePath] = useState('');
 
   // Municipality selection state
   const [availableMunicipalities, setAvailableMunicipalities] = useState([]);
@@ -78,6 +84,19 @@ export default function ExportScreen({ navigation }) {
   const loadStats = async () => {
     try {
       logDebug('Loading export stats...');
+
+      // Check SAF status
+      try {
+        const hasSAF = await isSAFInitialized();
+        setSafEnabled(hasSAF);
+        if (hasSAF) {
+          const info = await getStorageLocationInfo();
+          setStoragePath(info.displayPath || '');
+        }
+        logDebug('SAF enabled:', hasSAF);
+      } catch (e) {
+        logDebug('Error checking SAF:', e.message);
+      }
 
       // Count CSV records using proper parser (handles newlines in quoted fields)
       const csvContent = await readCSV();
@@ -219,35 +238,6 @@ export default function ExportScreen({ navigation }) {
     setIsExporting(false);
   };
 
-  const collectAllImages = async (dir, images = []) => {
-    try {
-      const dirInfo = await FileSystem.getInfoAsync(dir);
-      if (!dirInfo.exists) {
-        logDebug('collectAllImages: Directory does not exist:', dir);
-        return images;
-      }
-
-      const items = await FileSystem.readDirectoryAsync(dir);
-      logDebug(`collectAllImages: Found ${items.length} items in ${dir}`);
-
-      for (const item of items) {
-        const itemPath = `${dir}${item}`;
-        const info = await FileSystem.getInfoAsync(itemPath);
-        if (info.isDirectory) {
-          await collectAllImages(`${itemPath}/`, images);
-        } else if (item.toLowerCase().endsWith('.jpg') || item.toLowerCase().endsWith('.jpeg')) {
-          // Get relative path from images directory
-          const relativePath = itemPath.replace(getImagesDir(), '');
-          images.push({ path: itemPath, relativePath });
-          logDebug(`Found image: ${relativePath}`);
-        }
-      }
-    } catch (error) {
-      logDebug('collectAllImages error:', error.message);
-    }
-    return images;
-  };
-
   /**
    * Group CSV records by municipality
    * @param {Array<Array<string>>} rows - Parsed CSV rows (including header)
@@ -307,6 +297,7 @@ export default function ExportScreen({ navigation }) {
 
     setIsExportingZip(true);
     setExportProgress(0);
+    setExportStatus('Preparing...');
 
     try {
       const zip = new JSZip();
@@ -354,6 +345,7 @@ export default function ExportScreen({ navigation }) {
 
       logDebug(`Exporting ${municipalities.length} selected municipalities`);
       setExportProgress(5);
+      setExportStatus('Building CSVs...');
 
       // Animate progress bar
       Animated.timing(progressWidth, {
@@ -396,53 +388,115 @@ export default function ExportScreen({ navigation }) {
 
       logDebug('CSV files created for all municipalities');
 
-      // Collect all images
-      const images = await collectAllImages(getImagesDir());
-      const totalImages = images.length;
+      // RAM-efficient image processing: process one image at a time
+      // This allows GC to free memory between reads instead of holding all images in memory
+      setExportStatus('Adding images...');
 
-      logDebug(`Found ${totalImages} images to process`);
+      const imagesDir = getImagesDir();
+      let totalImages = 0;
+      let processedImages = 0;
+
+      // First pass: count images (without loading them)
+      const countImagesRecursive = async (dir) => {
+        let count = 0;
+        try {
+          const dirInfo = await FileSystem.getInfoAsync(dir);
+          if (!dirInfo.exists) return 0;
+
+          const items = await FileSystem.readDirectoryAsync(dir);
+          for (const item of items) {
+            const itemPath = `${dir}${item}`;
+            const info = await FileSystem.getInfoAsync(itemPath);
+            if (info.isDirectory) {
+              count += await countImagesRecursive(`${itemPath}/`);
+            } else if (item.toLowerCase().endsWith('.jpg') || item.toLowerCase().endsWith('.jpeg')) {
+              count++;
+            }
+          }
+        } catch (e) {
+          logDebug('Error counting images:', e.message);
+        }
+        return count;
+      };
+
+      totalImages = await countImagesRecursive(imagesDir);
+      logDebug(`Found ${totalImages} images to process (RAM-efficient mode)`);
+
+      // Second pass: process images one at a time (RAM-efficient)
+      const processImagesRecursive = async (dir, baseDir) => {
+        try {
+          const dirInfo = await FileSystem.getInfoAsync(dir);
+          if (!dirInfo.exists) return;
+
+          const items = await FileSystem.readDirectoryAsync(dir);
+          for (const item of items) {
+            const itemPath = `${dir}${item}`;
+            const info = await FileSystem.getInfoAsync(itemPath);
+
+            if (info.isDirectory) {
+              await processImagesRecursive(`${itemPath}/`, baseDir);
+            } else if (item.toLowerCase().endsWith('.jpg') || item.toLowerCase().endsWith('.jpeg')) {
+              // Get relative path from images directory
+              const relativePath = itemPath.replace(baseDir, '');
+
+              // Find which municipality this image belongs to
+              const municipality = imageToMunicipality[relativePath] || imageToMunicipality[item] || 'Unknown';
+
+              // Skip if municipality not in selection
+              if (!selectedMunicipalities.includes(municipality)) {
+                processedImages++;
+                continue;
+              }
+
+              // Read image as base64 (one at a time - allows GC to free memory)
+              const imageData = await FileSystem.readAsStringAsync(itemPath, {
+                encoding: FileSystem.EncodingType.Base64,
+              });
+
+              // Add to zip under municipality folder
+              const municipalityFolder = zip.folder(municipality);
+              const imagesFolder = municipalityFolder.folder('images');
+              imagesFolder.file(relativePath, imageData, { base64: true });
+
+              // Update progress (15-90% for images)
+              processedImages++;
+              const progress = 15 + (processedImages / totalImages) * 75;
+              setExportProgress(Math.round(progress));
+              setExportStatus(`Adding images... ${processedImages}/${totalImages}`);
+
+              Animated.timing(progressWidth, {
+                toValue: progress,
+                duration: 100,
+                useNativeDriver: false,
+              }).start();
+
+              // imageData goes out of scope here, eligible for GC
+            }
+          }
+        } catch (error) {
+          logDebug('Error processing images:', error.message);
+        }
+      };
 
       if (totalImages > 0) {
-        for (let i = 0; i < images.length; i++) {
-          const { path, relativePath } = images[i];
-
-          // Extract filename from path to find municipality
-          const filename = path.split('/').pop();
-          const municipality = imageToMunicipality[relativePath] || imageToMunicipality[filename] || 'Unknown';
-
-          // Read image as base64
-          const imageData = await FileSystem.readAsStringAsync(path, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-
-          // Add to zip under municipality folder with structure preserved
-          // Structure: {Municipality}/images/{date_path}/{filename}
-          const municipalityFolder = zip.folder(municipality);
-          const imagesFolder = municipalityFolder.folder('images');
-          imagesFolder.file(relativePath, imageData, { base64: true });
-
-          // Update progress (15-90% for images)
-          const progress = 15 + ((i + 1) / totalImages) * 75;
-          setExportProgress(Math.round(progress));
-
-          Animated.timing(progressWidth, {
-            toValue: progress,
-            duration: 100,
-            useNativeDriver: false,
-          }).start();
-        }
+        await processImagesRecursive(imagesDir, imagesDir);
       }
 
       setExportProgress(95);
+      setExportStatus('Creating ZIP...');
       Animated.timing(progressWidth, {
         toValue: 95,
         duration: 100,
         useNativeDriver: false,
       }).start();
 
-      // Generate ZIP file
+      // Generate ZIP file with compression (streamFiles for better memory usage)
       logDebug('Generating ZIP file...');
-      const zipFileContent = await zip.generateAsync({ type: 'base64' });
+      const zipFileContent = await zip.generateAsync({
+        type: 'base64',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 6 },
+      });
 
       // Create timestamp for filename
       const now = new Date();
@@ -462,6 +516,7 @@ export default function ExportScreen({ navigation }) {
       logDebug('ZIP file created successfully', { path: zipPath, size: zipFileInfo.size, municipalities: municipalities.length });
 
       setExportProgress(100);
+      setExportStatus('Complete!');
       Animated.timing(progressWidth, {
         toValue: 100,
         duration: 200,
@@ -487,7 +542,7 @@ export default function ExportScreen({ navigation }) {
         Alert.alert('Error', 'Sharing is not available on this device');
       }
 
-      // Clean up cache file after export (for Android SAF, the actual file is in user's chosen directory)
+      // Clean up cache file after export
       try {
         await FileSystem.deleteAsync(zipPath, { idempotent: true });
       } catch {
@@ -500,6 +555,7 @@ export default function ExportScreen({ navigation }) {
 
     setIsExportingZip(false);
     setExportProgress(0);
+    setExportStatus('');
     progressWidth.setValue(0);
   };
 
@@ -614,6 +670,28 @@ export default function ExportScreen({ navigation }) {
               <Text style={styles.statLabel}>MB (Images)</Text>
             </View>
           </View>
+          {/* SAF Status Indicator */}
+          {Platform.OS === 'android' && (
+            <View style={[styles.safStatus, safEnabled ? styles.safEnabled : styles.safDisabled]}>
+              <Ionicons
+                name={safEnabled ? 'folder-open' : 'folder-outline'}
+                size={16}
+                color={safEnabled ? colors.primary : colors.text.tertiary}
+              />
+              <View style={styles.safStatusContent}>
+                <Text style={[styles.safStatusText, safEnabled && styles.safStatusTextEnabled]}>
+                  {safEnabled
+                    ? 'Public Storage Enabled'
+                    : 'Internal Storage Only'}
+                </Text>
+                {safEnabled && storagePath ? (
+                  <Text style={styles.safPathText} numberOfLines={1}>
+                    {storagePath}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+          )}
         </View>
 
         {/* Municipality Selection */}
@@ -704,11 +782,7 @@ export default function ExportScreen({ navigation }) {
                   />
                 </View>
                 <Text style={styles.progressText}>
-                  {exportProgress < 10
-                    ? 'Preparing...'
-                    : exportProgress < 95
-                    ? `Adding images... ${exportProgress}%`
-                    : 'Creating ZIP...'}
+                  {exportStatus || `${exportProgress}%`}
                 </Text>
               </View>
             ) : (
@@ -1083,5 +1157,38 @@ const styles = StyleSheet.create({
   checkboxSelected: {
     backgroundColor: colors.primary,
     borderColor: colors.primary,
+  },
+  // SAF status styles
+  safStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    gap: spacing.sm,
+  },
+  safEnabled: {
+    // Additional styling for enabled state if needed
+  },
+  safDisabled: {
+    opacity: 0.7,
+  },
+  safStatusText: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    color: colors.text.tertiary,
+  },
+  safStatusTextEnabled: {
+    color: colors.primary,
+  },
+  safStatusContent: {
+    flex: 1,
+  },
+  safPathText: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    color: colors.text.tertiary,
+    marginTop: 2,
   },
 });

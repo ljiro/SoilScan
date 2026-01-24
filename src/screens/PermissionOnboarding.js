@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
+import * as MediaLibrary from 'expo-media-library';
 import * as Haptics from 'expo-haptics';
 import { fonts, fontSizes, colors } from '../constants/theme';
 import AnimatedButton from '../components/AnimatedButton';
@@ -123,26 +124,26 @@ export default function PermissionOnboarding({ onComplete }) {
       const cameraResult = await requestCameraPermission();
       const cameraGranted = cameraResult?.granted || false;
       console.log('[PermissionOnboarding] Camera result:', cameraResult?.status, '- granted:', cameraGranted);
-      if (!cameraGranted && cameraResult?.canAskAgain === false) {
-        console.warn('[PermissionOnboarding] Camera permission permanently denied');
-      }
 
       // Request location permission
       console.log('[PermissionOnboarding] Requesting location permission...');
       const locationResult = await Location.requestForegroundPermissionsAsync();
       const locationGranted = locationResult.status === 'granted';
       console.log('[PermissionOnboarding] Location result:', locationResult.status, '- granted:', locationGranted);
-      if (!locationGranted && locationResult.canAskAgain === false) {
-        console.warn('[PermissionOnboarding] Location permission permanently denied');
-      }
+
+      // Request media library permission (for saving to gallery/DCIM)
+      console.log('[PermissionOnboarding] Requesting media library permission...');
+      const mediaResult = await MediaLibrary.requestPermissionsAsync();
+      const mediaGranted = mediaResult.status === 'granted';
+      console.log('[PermissionOnboarding] Media library result:', mediaResult.status, '- granted:', mediaGranted);
 
       // Storage is always available - documentDirectory doesn't need permissions
       const storageGranted = true;
-      console.log('[PermissionOnboarding] Storage: always available (documentDirectory needs no permission)');
 
       const newPermissions = {
         camera: cameraGranted,
         location: locationGranted,
+        mediaLibrary: mediaGranted,
         storage: storageGranted,
       };
       console.log('[PermissionOnboarding] Final permissions:', JSON.stringify(newPermissions));
@@ -153,6 +154,7 @@ export default function PermissionOnboarding({ onComplete }) {
       console.log('[PermissionOnboarding] Saving permission statuses...');
       await savePermissionStatus('camera', cameraGranted);
       await savePermissionStatus('location', locationGranted);
+      await savePermissionStatus('mediaLibrary', mediaGranted);
       await savePermissionStatus('storage', true); // Always true
       await savePermissionStatus('permissions_summary', {
         ...newPermissions,

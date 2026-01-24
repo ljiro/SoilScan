@@ -10,6 +10,10 @@ import {
   Animated,
   Easing,
   Dimensions,
+  Modal,
+  Pressable,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -24,7 +28,9 @@ import {
   checkPermissions,
 } from '../services/gpsService';
 import { saveImage, loadConfig } from '../services/storageService';
-import { appendToCSV, initCSV, getLastSpotNumber, getNextAvailableShot, updateCSVRow } from '../services/csvService';
+import { saveImageToPublicStorage, isSAFInitialized } from '../services/publicStorageService';
+// Note: isSAFInitialized is used in performSave to check if we should save to public storage
+import { initCSV, getLastSpotNumber, getNextAvailableShot, updateCSVRow, appendToMunicipalityCSV } from '../services/csvService';
 // Use legacy API - supported until SDK 55
 import * as FileSystem from 'expo-file-system/legacy';
 import { getWeatherData } from '../services/weatherService';
@@ -70,10 +76,15 @@ export default function CaptureScreen({ navigation, route }) {
   const [imageQuality, setImageQuality] = useState('1080p'); // '720p' or '1080p'
   const [captureMode, setCaptureMode] = useState('field'); // 'field' or 'controlled'
 
+  // Spot edit modal state
+  const [showSpotEditModal, setShowSpotEditModal] = useState(false);
+  const [spotEditValue, setSpotEditValue] = useState('');
+
   // Camera orientation states
   const [orientation, setOrientation] = useState({ pitch: 0, roll: 0, heading: 0 });
 
   // Config from Setup
+  
   const [config, setConfig] = useState({
     municipality: null,
     barangay: null,
@@ -373,6 +384,43 @@ export default function CaptureScreen({ navigation, route }) {
     }
   };
 
+  // Spot edit modal functions
+  const openSpotEditModal = () => {
+    haptic('light');
+    setSpotEditValue(currentSpot.toString());
+    setShowSpotEditModal(true);
+  };
+
+  const closeSpotEditModal = () => {
+    setShowSpotEditModal(false);
+    setSpotEditValue('');
+  };
+
+  const saveSpotEdit = async () => {
+    const newSpot = parseInt(spotEditValue, 10);
+    if (isNaN(newSpot) || newSpot < 1) {
+      Alert.alert('Invalid Spot', 'Please enter a valid spot number (1 or greater)');
+      return;
+    }
+
+    haptic('medium');
+    setCurrentSpot(newSpot);
+
+    // Get next available shot for this spot at current location
+    try {
+      const municipalityLabel = config.municipality?.label ?? config.municipality ?? null;
+      const barangayLabel = config.barangay?.label ?? config.barangay ?? null;
+      const shotInfo = await getNextAvailableShot(newSpot, shotsPerSpot, municipalityLabel, barangayLabel);
+      setCurrentShot(shotInfo?.nextShot || 1);
+      console.log('[CaptureScreen] Jumped to spot', newSpot, 'shot', shotInfo?.nextShot || 1);
+    } catch (error) {
+      console.error('[CaptureScreen] saveSpotEdit error:', error.message);
+      setCurrentShot(1);
+    }
+
+    closeSpotEditModal();
+  };
+
   const takePicture = async () => {
     if (!cameraRef.current || isCapturing) {
       console.log('[CaptureScreen] STEP 1: takePicture called but skipped - cameraRef:', !!cameraRef.current, 'isCapturing:', isCapturing);
@@ -637,12 +685,32 @@ export default function CaptureScreen({ navigation, route }) {
         }
       }
 
-      // Step 3: Save image to app storage
+      // Step 3: Save image to internal storage first (fast, always works)
       const imagePath = await saveImage(capturedImage.uri, filename);
       if (!imagePath) {
         throw new Error('Image save returned empty path');
       }
-      console.log('[CaptureScreen] Image saved:', imagePath);
+      console.log('[CaptureScreen] Internal image saved:', imagePath);
+
+      // Step 3b: Also save to public SAF storage (if enabled)
+      // This makes files visible in file manager and accessible via USB
+      // Note: We don't use MediaLibrary/Gallery because Android 14+ requires per-file permission prompts
+      try {
+        const safEnabled = await isSAFInitialized();
+        if (safEnabled) {
+          // Get full path for the saved image
+          const fullImagePath = `${FileSystem.documentDirectory}AgriCapture/${imagePath}`;
+          const publicResult = await saveImageToPublicStorage(
+            fullImagePath,
+            filename,
+            municipalityLabel
+          );
+          console.log('[CaptureScreen] Public SAF save:', publicResult.success ? 'OK' : publicResult.error);
+        }
+      } catch (publicError) {
+        console.log('[CaptureScreen] Public storage error:', publicError.message);
+        // Don't throw - internal save succeeded, public is optional
+      }
 
       // Step 4: Prepare location data (only for field mode)
       const isFieldMode = captureMode === 'field';
@@ -689,13 +757,21 @@ export default function CaptureScreen({ navigation, route }) {
       };
 
       // Step 7: Save to CSV (update or append)
+      // Uses appendToMunicipalityCSV which saves to both internal and SAF storage
       if (isRetakeMode && retakeRecord?.uuid) {
         const updateResult = await updateCSVRow(retakeRecord.uuid, data);
         if (!updateResult.success) {
           throw new Error(updateResult.error || 'CSV update failed');
         }
       } else {
-        await appendToCSV(data);
+        // Append to both main CSV and municipality-specific CSV (including SAF if enabled)
+        const csvResult = await appendToMunicipalityCSV(data, municipalityLabel);
+        if (!csvResult.success) {
+          throw new Error('CSV append failed');
+        }
+        if (csvResult.safSuccess) {
+          console.log('[CaptureScreen] SAF CSV append successful');
+        }
       }
 
       console.log('[CaptureScreen] Save completed successfully!');
@@ -830,10 +906,19 @@ export default function CaptureScreen({ navigation, route }) {
             >
               <Ionicons name="chevron-back" size={20} color={currentSpot > 1 ? '#fff' : 'rgba(255,255,255,0.3)'} />
             </TouchableOpacity>
-            <View style={styles.spotInfo}>
-              <Text style={styles.spotLabel}>SPOT</Text>
-              <Text style={styles.spotNumber}>{currentSpot}</Text>
-            </View>
+            <TouchableOpacity
+              style={styles.spotInfoTouchable}
+              onPress={openSpotEditModal}
+              activeOpacity={0.7}
+            >
+              <View style={styles.spotInfo}>
+                <Text style={styles.spotLabel}>SPOT</Text>
+                <View style={styles.spotNumberRow}>
+                  <Text style={styles.spotNumber}>{currentSpot}</Text>
+                  <Ionicons name="pencil" size={12} color="rgba(255,255,255,0.5)" style={styles.spotEditIcon} />
+                </View>
+              </View>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.spotBtn} onPress={goToNextSpot}>
               <Ionicons name="chevron-forward" size={20} color="#fff" />
             </TouchableOpacity>
@@ -863,6 +948,7 @@ export default function CaptureScreen({ navigation, route }) {
             </View>
           </View>
 
+          
           {/* Offline warning banner - only show in Field mode */}
           {captureMode === 'field' && !isOnline && (
             <View style={styles.offlineBanner}>
@@ -939,6 +1025,57 @@ export default function CaptureScreen({ navigation, route }) {
             style={[StyleSheet.absoluteFill, styles.flash, { opacity: shutterFlash }]}
           />
         </CameraView>
+
+        {/* Spot Edit Modal - also available in camera view */}
+        <Modal
+          visible={showSpotEditModal}
+          transparent
+          animationType="fade"
+          onRequestClose={closeSpotEditModal}
+        >
+          <Pressable
+            style={styles.spotEditModalOverlay}
+            onPress={closeSpotEditModal}
+          >
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={styles.spotEditModalKeyboard}
+            >
+              <Pressable
+                style={styles.spotEditModalContent}
+                onPress={(e) => e.stopPropagation()}
+              >
+                <Text style={styles.spotEditModalTitle}>Go to Spot</Text>
+                <Text style={styles.spotEditModalSubtitle}>
+                  Enter spot number (1-999)
+                </Text>
+                <TextInput
+                  style={styles.spotEditModalInput}
+                  value={spotEditValue}
+                  onChangeText={setSpotEditValue}
+                  keyboardType="number-pad"
+                  maxLength={3}
+                  autoFocus
+                  selectTextOnFocus
+                />
+                <View style={styles.spotEditModalActions}>
+                  <TouchableOpacity
+                    style={styles.spotEditModalCancelBtn}
+                    onPress={closeSpotEditModal}
+                  >
+                    <Text style={styles.spotEditModalCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.spotEditModalSaveBtn}
+                    onPress={saveSpotEdit}
+                  >
+                    <Text style={styles.spotEditModalSaveText}>Go</Text>
+                  </TouchableOpacity>
+                </View>
+              </Pressable>
+            </KeyboardAvoidingView>
+          </Pressable>
+        </Modal>
       </View>
     );
   }
@@ -1010,6 +1147,58 @@ export default function CaptureScreen({ navigation, route }) {
           </Animated.View>
         </TouchableOpacity>
       </View>
+
+      {/* Spot Edit Modal */}
+      <Modal
+        visible={showSpotEditModal}
+        transparent
+        animationType="fade"
+        onRequestClose={closeSpotEditModal}
+      >
+        <Pressable
+          style={styles.spotEditModalOverlay}
+          onPress={closeSpotEditModal}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.spotEditModalKeyboard}
+          >
+            <Pressable
+              style={styles.spotEditModalContent}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <Text style={styles.spotEditModalTitle}>Go to Spot</Text>
+              <Text style={styles.spotEditModalSubtitle}>
+                Enter the spot number you want to capture
+              </Text>
+              <TextInput
+                style={styles.spotEditModalInput}
+                value={spotEditValue}
+                onChangeText={setSpotEditValue}
+                keyboardType="number-pad"
+                placeholder="Enter spot number"
+                placeholderTextColor="rgba(255,255,255,0.4)"
+                autoFocus
+                selectTextOnFocus
+              />
+              <View style={styles.spotEditModalActions}>
+                <TouchableOpacity
+                  style={styles.spotEditModalCancelBtn}
+                  onPress={closeSpotEditModal}
+                >
+                  <Text style={styles.spotEditModalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.spotEditModalSaveBtn}
+                  onPress={saveSpotEdit}
+                >
+                  <Text style={styles.spotEditModalSaveText}>Go</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -1144,6 +1333,58 @@ const styles = StyleSheet.create({
     fontFamily: fonts.semiBold,
     fontSize: fontSizes.sm,
     color: colors.secondary,
+  },
+
+  // Storage indicator
+  storageIndicatorBar: {
+    position: 'absolute',
+    top: 210,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingVertical: 4,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+    zIndex: 10,
+  },
+  storageIndicatorEnabled: {
+    backgroundColor: 'rgba(76, 175, 80, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(76, 175, 80, 0.4)',
+  },
+  storageIndicatorDisabled: {
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  storageIndicatorText: {
+    fontFamily: fonts.regular,
+    fontSize: 10,
+  },
+  storageTextEnabled: {
+    color: colors.primary,
+  },
+  storageTextDisabled: {
+    color: colors.text.muted,
+  },
+  storageWarningToast: {
+    position: 'absolute',
+    top: 240,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: 'rgba(255, 152, 0, 0.9)',
+    borderRadius: radius.md,
+    zIndex: 20,
+  },
+  storageWarningText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.xs,
+    color: '#fff',
   },
 
   // Offline banner
@@ -1368,7 +1609,7 @@ const styles = StyleSheet.create({
   captureBoxDarkTop: {
     flex: 1,
     width: '100%',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     minHeight: 220, // Space for top info bars
   },
   captureBoxMiddle: {
@@ -1377,13 +1618,13 @@ const styles = StyleSheet.create({
   },
   captureBoxDarkSide: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     minWidth: 24,
   },
   captureBoxDarkBottom: {
     flex: 1,
     width: '100%',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     minHeight: 280, // Space for bottom controls
   },
   captureBox: {
@@ -1446,5 +1687,92 @@ const styles = StyleSheet.create({
     color: colors.primary,
     letterSpacing: 1.5,
     textTransform: 'uppercase',
+  },
+
+  // Spot edit touchable and modal styles
+  spotInfoTouchable: {
+    marginHorizontal: spacing.sm,
+  },
+  spotNumberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  spotEditIcon: {
+    marginTop: 2,
+  },
+  spotEditModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  spotEditModalKeyboard: {
+    width: '100%',
+    alignItems: 'center',
+  },
+  spotEditModalContent: {
+    backgroundColor: 'rgba(30,30,30,0.95)',
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    width: '80%',
+    maxWidth: 300,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  spotEditModalTitle: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.lg,
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  spotEditModalSubtitle: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    color: 'rgba(255,255,255,0.6)',
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+  },
+  spotEditModalInput: {
+    fontFamily: fonts.bold,
+    fontSize: fontSizes.xxl,
+    color: colors.primary,
+    textAlign: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  spotEditModalActions: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  spotEditModalCancelBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+  },
+  spotEditModalCancelText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.base,
+    color: 'rgba(255,255,255,0.7)',
+  },
+  spotEditModalSaveBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+  },
+  spotEditModalSaveText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.base,
+    color: '#fff',
   },
 });

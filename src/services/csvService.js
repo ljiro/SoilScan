@@ -2,6 +2,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getAppRootDir, ensureDir } from './storageService';
+import { isSAFInitialized, saveCSVToPublicStorage, readCSVFromPublicStorage } from './publicStorageService';
 
 const BACKUP_KEY_PREFIX = '@agricapture_backup_';
 
@@ -913,4 +914,91 @@ export const parseCSVToRecords = (csvContent) => {
 
   console.log('[CSVService] parseCSVToRecords: converted', records.length, 'records');
   return records;
+};
+
+/**
+ * Append a data row to both the main CSV and municipality-specific public storage
+ * This is the main function to use when saving captured data.
+ *
+ * @param {Object} data - Object with keys matching CSV_HEADERS
+ * @param {string} municipality - Municipality name for organizing in public storage
+ * @returns {Promise<{success: boolean, safSuccess?: boolean, error?: string}>}
+ */
+export const appendToMunicipalityCSV = async (data, municipality) => {
+  console.log('[CSVService] appendToMunicipalityCSV called for:', municipality);
+
+  const result = {
+    success: false,
+    safSuccess: false,
+    error: null,
+  };
+
+  try {
+    // Step 1: Always append to main internal CSV first (reliable, fast)
+    await appendToCSV(data);
+    result.success = true;
+    console.log('[CSVService] Internal CSV append successful');
+
+    // Step 2: Also save to public SAF storage if enabled
+    try {
+      const safEnabled = await isSAFInitialized();
+      if (safEnabled && municipality) {
+        // Read current municipality CSV content (if any)
+        const existingResult = await readCSVFromPublicStorage(municipality);
+        let csvContent;
+
+        if (existingResult.success && existingResult.content) {
+          // Append to existing content
+          const existingContent = existingResult.content.trim();
+
+          // Build the new row
+          const row = CSV_HEADERS.map(header => {
+            let value = data[header];
+            if (value === null || value === undefined) return '';
+            value = String(value);
+            value = value.replace(/\r\n/g, ' ').replace(/\r/g, ' ').replace(/\n/g, ' ');
+            if (value.includes(',') || value.includes('"')) {
+              value = `"${value.replace(/"/g, '""')}"`;
+            }
+            return value;
+          }).join(',');
+
+          csvContent = existingContent + '\n' + row + '\n';
+        } else {
+          // Create new CSV with headers and this row
+          const row = CSV_HEADERS.map(header => {
+            let value = data[header];
+            if (value === null || value === undefined) return '';
+            value = String(value);
+            value = value.replace(/\r\n/g, ' ').replace(/\r/g, ' ').replace(/\n/g, ' ');
+            if (value.includes(',') || value.includes('"')) {
+              value = `"${value.replace(/"/g, '""')}"`;
+            }
+            return value;
+          }).join(',');
+
+          csvContent = CSV_HEADERS.join(',') + '\n' + row + '\n';
+        }
+
+        // Save to public storage
+        const safResult = await saveCSVToPublicStorage(municipality, csvContent);
+        result.safSuccess = safResult.success;
+
+        if (safResult.success) {
+          console.log('[CSVService] SAF CSV save successful');
+        } else {
+          console.warn('[CSVService] SAF CSV save failed:', safResult.error);
+        }
+      }
+    } catch (safError) {
+      console.warn('[CSVService] SAF storage error (non-fatal):', safError.message);
+      // Don't fail the whole operation - internal save succeeded
+    }
+
+    return result;
+  } catch (error) {
+    console.error('[CSVService] appendToMunicipalityCSV failed:', error.message);
+    result.error = error.message;
+    throw error; // Re-throw so caller knows it failed
+  }
 };
