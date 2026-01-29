@@ -5,12 +5,86 @@ import { Platform } from 'react-native';
 
 // Use lazy evaluation for all paths to ensure FileSystem.documentDirectory is available
 // These are evaluated at runtime, not module load time, to avoid null/undefined issues
+
+// Cache for base storage dir to avoid repeated auto-detection
+let baseStorageDirCache = null;
+let baseStorageDirPromise = null;
+
+/**
+ * Get the base storage directory (can be external storage on Android)
+ * On Android, tries to use external storage accessible via file managers
+ * Falls back to documentDirectory if external storage is not available
+ */
+const getBaseStorageDir = async () => {
+  // Return cached result if available
+  if (baseStorageDirCache) {
+    return baseStorageDirCache;
+  }
+
+  // If detection is in progress, wait for it
+  if (baseStorageDirPromise) {
+    return await baseStorageDirPromise;
+  }
+
+  // Start detection
+  baseStorageDirPromise = (async () => {
+    if (Platform.OS === 'android') {
+      // Check if external storage path is configured
+      const storageConfig = await loadConfig('storage_location');
+      if (storageConfig?.externalPath) {
+        // Use external if explicitly configured and still accessible
+        try {
+          const info = await FileSystem.getInfoAsync(storageConfig.externalPath);
+          if (info.exists && info.isDirectory) {
+            const path = storageConfig.externalPath.endsWith('/') ? storageConfig.externalPath : `${storageConfig.externalPath}/`;
+            console.log('[StorageService] Using configured external storage:', path);
+            baseStorageDirCache = path;
+            return path;
+          }
+        } catch (error) {
+          console.warn('[StorageService] External storage path not accessible, trying auto-detect:', error.message);
+        }
+      }
+      // Try phone Documents / Download / etc. so CSV and images are visible in file manager
+      console.log('[StorageService] Trying external storage (Documents, Download, etc.)...');
+      const autoDetectResult = await autoDetectExternalStorage();
+      if (autoDetectResult.success) {
+        const raw = autoDetectResult.path;
+        const path = raw.endsWith('/') ? raw : `${raw}/`;
+        console.log('[StorageService] ✓ Using external storage:', path);
+        baseStorageDirCache = path;
+        return path;
+      }
+      console.log('[StorageService] External not available, using app documentDirectory');
+    }
+    
+    // Default to documentDirectory (app sandbox - not accessible via file managers)
+    const path = `${FileSystem.documentDirectory}AgriCapture/`;
+    console.log('[StorageService] Using documentDirectory (internal storage):', path);
+    baseStorageDirCache = path;
+    return path;
+  })();
+
+  const result = await baseStorageDirPromise;
+  baseStorageDirPromise = null;
+  return result;
+};
+
+// For synchronous access, use documentDirectory as default
+// External storage will be used when getBaseStorageDir() is called
 const getAppRootDir = () => `${FileSystem.documentDirectory}AgriCapture/`;
 const getImagesDir = () => `${getAppRootDir()}images/`;
 const getDataDir = () => `${getAppRootDir()}data/`;
 const getConfigDir = () => `${getAppRootDir()}config/`;
 const getCacheDir = () => `${getAppRootDir()}cache/`;
 const getExportsDir = () => `${getAppRootDir()}exports/`;
+
+// Async versions that support external storage
+const getAppRootDirAsync = async () => await getBaseStorageDir();
+const getImagesDirAsync = async () => `${await getBaseStorageDir()}images/`;
+const getDataDirAsync = async () => `${await getBaseStorageDir()}data/`;
+const getConfigDirAsync = async () => `${await getBaseStorageDir()}config/`;
+
 const CONFIG_PREFIX = '@agricapture_config_';
 
 const isWeb = Platform.OS === 'web';
@@ -41,36 +115,140 @@ const withRetry = async (operation, maxRetries = 3, delay = 200) => {
 
 /**
  * Ensure directory exists (native only)
+ * With retry logic for APK builds
  */
-const ensureDir = async (dir) => {
+const ensureDir = async (dir, retries = 3) => {
   if (isWeb) return true;
-  try {
-    const info = await FileSystem.getInfoAsync(dir);
-    if (!info.exists) {
-      await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+  
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const info = await FileSystem.getInfoAsync(dir);
+      if (!info.exists) {
+        console.log(`[StorageService] Creating directory (attempt ${attempt}/${retries}):`, dir);
+        await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+        
+        // Verify it was created
+        const verifyInfo = await FileSystem.getInfoAsync(dir);
+        if (verifyInfo.exists && verifyInfo.isDirectory) {
+          console.log(`[StorageService] ✓ Directory created successfully:`, dir);
+          return true;
+        } else {
+          throw new Error('Directory creation verification failed');
+        }
+      } else {
+        console.log(`[StorageService] ✓ Directory already exists:`, dir);
+        return true;
+      }
+    } catch (error) {
+      console.error(`[StorageService] Directory creation error (attempt ${attempt}/${retries}):`, dir, error.message);
+      if (attempt === retries) {
+        console.error('[StorageService] ✗ Failed to create directory after', retries, 'attempts:', dir);
+        return false;
+      }
+      // Wait before retry (exponential backoff)
+      await new Promise(resolve => setTimeout(resolve, 200 * attempt));
     }
-    return true;
-  } catch (error) {
-    console.error('Directory error:', dir, error);
-    return false;
   }
+  return false;
 };
 
 /**
  * Initialize storage directories
+ * Enhanced for APK builds with better error handling
+ * Uses external storage on Android if available
  */
 export const initStorage = async () => {
-  if (isWeb) return;
-  await ensureDir(getAppRootDir());
-  await ensureDir(getImagesDir());
-  await ensureDir(getDataDir());
-  await ensureDir(getConfigDir());
-  await ensureDir(getCacheDir());
-  await ensureDir(getExportsDir());
+  if (isWeb) {
+    console.log('[StorageService] Web platform - skipping directory initialization');
+    return;
+  }
+
+  console.log('[StorageService] === Initializing Storage Directories ===');
+  console.log('[StorageService] documentDirectory:', FileSystem.documentDirectory);
+  
+  if (!FileSystem.documentDirectory) {
+    console.error('[StorageService] CRITICAL: documentDirectory is null/undefined');
+    throw new Error('FileSystem.documentDirectory is not available');
+  }
+
+  // On Android, try Documents/Download so files are visible in file manager
+  if (Platform.OS === 'android') {
+    const storageConfig = await loadConfig('storage_location');
+    if (!storageConfig?.externalPath) {
+      console.log('[StorageService] Trying external storage (Documents/Download)...');
+      const autoDetectResult = await autoDetectExternalStorage();
+      if (autoDetectResult.success) {
+        console.log('[StorageService] ✓ Using external storage:', autoDetectResult.path);
+      }
+    }
+  }
+
+  const directories = [
+    { name: 'App Root', getPath: () => getAppRootDirAsync() },
+    { name: 'Images', getPath: () => getImagesDirAsync() },
+    { name: 'Data', getPath: () => getDataDirAsync() },
+    { name: 'Config', getPath: () => getConfigDirAsync() },
+    { name: 'Cache', getPath: () => getAppRootDirAsync().then(p => `${p}cache/`) },
+    { name: 'Exports', getPath: () => getAppRootDirAsync().then(p => `${p}exports/`) },
+  ];
+
+  const results = {
+    success: true,
+    created: [],
+    existing: [],
+    failed: [],
+    storageLocation: 'internal',
+  };
+
+  // Get storage location info
+  const storageInfo = await getStorageLocationInfo();
+  results.storageLocation = storageInfo.type;
+  results.storagePath = storageInfo.fullPath;
+  console.log('[StorageService] Using storage location:', storageInfo.type, '-', storageInfo.fullPath);
+
+  for (const { name, getPath } of directories) {
+    try {
+      const path = await getPath();
+      const created = await ensureDir(path, 3);
+      if (created) {
+        const info = await FileSystem.getInfoAsync(path);
+        if (info.exists) {
+          results.existing.push({ name, path });
+          console.log('[StorageService] ✓', name, 'directory exists:', path);
+        } else {
+          results.created.push({ name, path });
+          console.log('[StorageService] ✓', name, 'directory created:', path);
+        }
+      } else {
+        results.success = false;
+        results.failed.push({ name, path });
+        console.error('[StorageService] ✗ Failed to create', name, 'directory:', path);
+      }
+    } catch (error) {
+      results.success = false;
+      const path = await getPath().catch(() => 'unknown');
+      results.failed.push({ name, path, error: error.message });
+      console.error('[StorageService] ✗ Error creating', name, 'directory:', error.message);
+    }
+  }
+
+  console.log('[StorageService] === Directory Initialization Complete ===');
+  console.log('[StorageService] Storage location:', results.storageLocation);
+  console.log('[StorageService] Storage path:', results.storagePath);
+  console.log('[StorageService] Created:', results.created.length);
+  console.log('[StorageService] Existing:', results.existing.length);
+  console.log('[StorageService] Failed:', results.failed.length);
+  
+  if (results.failed.length > 0) {
+    console.error('[StorageService] Failed directories:', results.failed);
+  }
+
+  return results;
 };
 
 /**
  * Check and create all required directories on app startup
+ * Uses async paths to support external storage on Android
  * Returns status of each directory
  */
 export const initializeAppDirectories = async () => {
@@ -78,28 +256,79 @@ export const initializeAppDirectories = async () => {
     return { success: true, platform: 'web', directories: [] };
   }
 
+  // Clear base storage cache so we use current config (external vs internal)
+  baseStorageDirCache = null;
+  baseStorageDirPromise = null;
+
+  console.log('[StorageService] === initializeAppDirectories ===');
+  console.log('[StorageService] Platform:', Platform.OS);
+  console.log('[StorageService] documentDirectory:', FileSystem.documentDirectory);
+
+  if (!FileSystem.documentDirectory) {
+    console.error('[StorageService] CRITICAL: documentDirectory is null/undefined');
+    return {
+      success: false,
+      platform: Platform.OS,
+      directories: [],
+      errors: ['FileSystem.documentDirectory is not available'],
+    };
+  }
+
+  // Use documentDirectory by default (no auto-detect of external storage)
   const results = {
     success: true,
     platform: Platform.OS,
     directories: [],
     errors: [],
+    storageLocation: 'internal',
   };
 
-  for (const dir of getRequiredDirectories()) {
+  // Use async paths to support external storage
+  const directories = [
+    { name: 'App Root', getPath: () => getAppRootDirAsync() },
+    { name: 'Images', getPath: () => getImagesDirAsync() },
+    { name: 'Data', getPath: () => getDataDirAsync() },
+    { name: 'Config', getPath: () => getConfigDirAsync() },
+    { name: 'Cache', getPath: () => getAppRootDirAsync().then(p => `${p}cache/`) },
+    { name: 'Exports', getPath: () => getAppRootDirAsync().then(p => `${p}exports/`) },
+  ];
+
+  // Get storage location info
+  const storageInfo = await getStorageLocationInfo();
+  results.storageLocation = storageInfo.type;
+  results.storagePath = storageInfo.fullPath;
+  console.log('[StorageService] Using storage location:', storageInfo.type, '-', storageInfo.fullPath);
+
+  for (const { name, getPath } of directories) {
     try {
-      const info = await FileSystem.getInfoAsync(dir);
-      if (!info.exists) {
-        await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-        results.directories.push({ path: dir, status: 'created' });
+      const dir = await getPath();
+      const created = await ensureDir(dir, 3);
+      if (created) {
+        const info = await FileSystem.getInfoAsync(dir);
+        if (info.exists) {
+          results.directories.push({ path: dir, status: 'exists', name });
+          console.log('[StorageService] ✓', name, 'directory exists:', dir);
+        } else {
+          results.directories.push({ path: dir, status: 'created', name });
+          console.log('[StorageService] ✓', name, 'directory created:', dir);
+        }
       } else {
-        results.directories.push({ path: dir, status: 'exists' });
+        throw new Error('Directory creation failed after retries');
       }
     } catch (error) {
       results.success = false;
-      results.errors.push({ path: dir, error: error.message });
-      results.directories.push({ path: dir, status: 'error', error: error.message });
+      results.errors.push({ path: name, error: error.message });
+      results.directories.push({ path: name, status: 'error', error: error.message });
+      console.error('[StorageService] ✗ Failed to create', name, 'directory:', error.message);
     }
   }
+
+  console.log('[StorageService] Directory initialization result:', {
+    success: results.success,
+    storageLocation: results.storageLocation,
+    total: results.directories.length,
+    errors: results.errors.length,
+  });
 
   return results;
 };
@@ -135,7 +364,7 @@ export const verifyDirectoryStructure = async () => {
 };
 
 /**
- * Get date-based path for organizing images
+ * Get date-based path for organizing images (legacy - kept for backward compatibility)
  */
 export const getDatePath = () => {
   const now = new Date();
@@ -146,12 +375,189 @@ export const getDatePath = () => {
 };
 
 /**
- * Save image to storage
+ * Sanitize a string for use as a directory name
+ */
+const sanitizeDirName = (name) => {
+  if (!name) return 'unknown';
+  return name
+    .toLowerCase()
+    .replace(/\s+/g, '_')      // Replace spaces with underscores
+    .replace(/[^a-z0-9_]/g, '') // Remove special chars except underscores
+    .slice(0, 50);              // Max 50 chars
+};
+
+/**
+ * Get label-based path for organizing images based on user config
+ * Format: municipality/barangay/farm/crop/
+ */
+export const getLabelBasedPath = async (cropLabel = null) => {
+  try {
+    const config = await loadConfig('user_config');
+    if (!config) {
+      // Fallback to date-based if no config
+      return getDatePath();
+    }
+
+    const municipality = sanitizeDirName(config.municipalityLabel || 'unknown');
+    const barangay = sanitizeDirName(config.barangayLabel || 'unknown');
+    const farm = config.farmName ? sanitizeDirName(config.farmName) : 'no_farm';
+    const crop = cropLabel ? sanitizeDirName(cropLabel) : 'mixed_crops';
+
+    return `${municipality}/${barangay}/${farm}/${crop}/`;
+  } catch (error) {
+    console.error('[StorageService] Error getting label-based path:', error);
+    // Fallback to date-based
+    return getDatePath();
+  }
+};
+
+/**
+ * Set external storage location (Android only)
+ * @param {string} externalPath - Path to external storage directory (e.g., /storage/emulated/0/AgriCapture)
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export const setExternalStorageLocation = async (externalPath) => {
+  if (Platform.OS !== 'android') {
+    return { success: false, error: 'External storage is only available on Android' };
+  }
+
+  if (!externalPath) {
+    // Clear external storage config, use documentDirectory
+    await deleteConfig('storage_location');
+    baseStorageDirCache = null;
+    baseStorageDirPromise = null;
+    return { success: true, message: 'Using app documentDirectory' };
+  }
+
+  try {
+    // Verify the path exists and is writable
+    const info = await FileSystem.getInfoAsync(externalPath);
+    if (!info.exists) {
+      // Try to create the directory
+      await FileSystem.makeDirectoryAsync(externalPath, { intermediates: true });
+    }
+
+    // Test write capability
+    const testFile = `${externalPath}/.storage_test`;
+    const testContent = `test_${Date.now()}`;
+    await FileSystem.writeAsStringAsync(testFile, testContent);
+    const readBack = await FileSystem.readAsStringAsync(testFile);
+    await FileSystem.deleteAsync(testFile, { idempotent: true });
+
+    if (readBack === testContent) {
+      // Save the external path
+      await saveConfig('storage_location', { externalPath, setAt: new Date().toISOString() });
+      // Clear cache so next getBaseStorageDir() uses the new path
+      baseStorageDirCache = null;
+      baseStorageDirPromise = null;
+      // Create subdirs so external storage has full structure
+      const subdirs = ['images', 'data', 'config', 'cache', 'exports'];
+      const base = externalPath.endsWith('/') ? externalPath : `${externalPath}/`;
+      for (const d of subdirs) {
+        try {
+          await FileSystem.makeDirectoryAsync(`${base}${d}`, { intermediates: true });
+        } catch (_) {}
+      }
+      return { success: true, message: 'External storage location set successfully' };
+    } else {
+      return { success: false, error: 'Storage location is not writable' };
+    }
+  } catch (error) {
+    console.error('[StorageService] Error setting external storage:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+/**
+ * Get current storage location info
+ * @returns {Promise<{location: string, type: 'external' | 'internal', path: string}>}
+ */
+export const getStorageLocationInfo = async () => {
+  const storageConfig = await loadConfig('storage_location');
+  
+  if (storageConfig?.externalPath && Platform.OS === 'android') {
+    const base = storageConfig.externalPath.endsWith('/') ? storageConfig.externalPath : `${storageConfig.externalPath}/`;
+    return {
+      location: 'external',
+      type: 'external',
+      path: storageConfig.externalPath,
+      fullPath: base,
+    };
+  }
+
+  return {
+    location: 'internal',
+    type: 'internal',
+    path: FileSystem.documentDirectory || 'unknown',
+    fullPath: `${FileSystem.documentDirectory}AgriCapture/`,
+  };
+};
+
+/**
+ * Create directories based on user config labels
+ * This is called when setup is saved to ensure directories exist
+ */
+export const createLabelBasedDirectories = async () => {
+  if (isWeb) return { success: true, message: 'Web platform - no directories needed' };
+
+  try {
+    const config = await loadConfig('user_config');
+    if (!config) {
+      return { success: false, error: 'No user config found' };
+    }
+
+    const municipality = sanitizeDirName(config.municipalityLabel || 'unknown');
+    const barangay = sanitizeDirName(config.barangayLabel || 'unknown');
+    const farm = config.farmName ? sanitizeDirName(config.farmName) : 'no_farm';
+
+    // Create base structure: municipality/barangay/farm/
+    // Use async version to support external storage
+    const imagesDir = await getImagesDirAsync();
+    const basePath = `${imagesDir}${municipality}/${barangay}/${farm}/`;
+    await ensureDir(basePath);
+
+    // Create directories for each selected crop
+    const crops = config.selectedCropLabels || [];
+    const createdDirs = [basePath];
+
+    for (const cropLabel of crops) {
+      const crop = sanitizeDirName(cropLabel);
+      const cropPath = `${basePath}${crop}/`;
+      const created = await ensureDir(cropPath, 3);
+      if (created) {
+        createdDirs.push(cropPath);
+      } else {
+        console.error('[StorageService] Failed to create crop directory:', cropPath);
+      }
+    }
+
+    // Also create a "mixed_crops" directory for images without specific crop
+    const mixedPath = `${basePath}mixed_crops/`;
+    const mixedCreated = await ensureDir(mixedPath, 3);
+    if (mixedCreated) {
+      createdDirs.push(mixedPath);
+    } else {
+      console.error('[StorageService] Failed to create mixed_crops directory:', mixedPath);
+    }
+
+    console.log('[StorageService] Created label-based directories:', createdDirs);
+    return { success: true, directories: createdDirs };
+  } catch (error) {
+    console.error('[StorageService] Error creating label-based directories:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+/**
+ * Save image to persistent storage (documentDirectory, NOT cache)
+ * Images are stored on disk in organized directories - not in RAM or cache
+ * This ensures images persist and don't consume memory
  * @param {string} uri - Source image URI (from camera or ImageManipulator)
  * @param {string} filename - Target filename
+ * @param {string} cropLabel - Optional crop label to organize into specific crop directory
  * @returns {Promise<string>} Relative path for CSV storage, or throws error
  */
-export const saveImage = async (uri, filename) => {
+export const saveImage = async (uri, filename, cropLabel = null) => {
   if (isWeb) {
     console.warn('[StorageService] Image saving not supported on web');
     return uri;
@@ -173,10 +579,13 @@ export const saveImage = async (uri, filename) => {
     // Try to use as-is, FileSystem should handle it
   }
 
-  const datePath = getDatePath();
-  const fullDir = `${getImagesDir()}${datePath}`;
+  // Get label-based path (will fallback to date-based if no config)
+  const labelPath = await getLabelBasedPath(cropLabel);
+  // Use async version to support external storage
+  const imagesDir = await getImagesDirAsync();
+  const fullDir = `${imagesDir}${labelPath}`;
   const destPath = `${fullDir}${filename}`;
-  const relativePath = `images/${datePath}${filename}`;
+  const relativePath = `images/${labelPath}${filename}`;
 
   console.log('[StorageService] === Starting Image Save ===');
   console.log('[StorageService] Source URI:', uri);
@@ -186,27 +595,32 @@ export const saveImage = async (uri, filename) => {
   try {
     // Step 1: Ensure the app root directory exists first
     console.log('[StorageService] Step 1: Creating app root directory...');
-    const rootCreated = await ensureDir(getAppRootDir());
+    const appRootDir = await getAppRootDirAsync();
+    const rootCreated = await ensureDir(appRootDir, 3);
     if (!rootCreated) {
+      console.error('[StorageService] Failed to create app root directory after retries');
       throw new Error('Failed to create app root directory. Check storage permissions.');
     }
-    console.log('[StorageService] App root directory ready');
+    console.log('[StorageService] App root directory ready:', appRootDir);
 
     // Step 2: Ensure the images base directory exists
     console.log('[StorageService] Step 2: Creating images directory...');
-    const baseCreated = await ensureDir(getImagesDir());
+    const imagesBaseDir = await getImagesDirAsync();
+    const baseCreated = await ensureDir(imagesBaseDir, 3);
     if (!baseCreated) {
+      console.error('[StorageService] Failed to create base images directory after retries');
       throw new Error('Failed to create base images directory. Check storage permissions.');
     }
-    console.log('[StorageService] Images base directory ready');
+    console.log('[StorageService] Images base directory ready:', imagesBaseDir);
 
-    // Step 3: Create the date-based subdirectory
-    console.log('[StorageService] Step 3: Creating date subdirectory...');
-    const dirCreated = await ensureDir(fullDir);
+    // Step 3: Create the label-based subdirectory
+    console.log('[StorageService] Step 3: Creating label-based subdirectory...');
+    const dirCreated = await ensureDir(fullDir, 3);
     if (!dirCreated) {
-      throw new Error(`Failed to create date directory: ${fullDir}. Check storage permissions.`);
+      console.error('[StorageService] Failed to create label directory after retries:', fullDir);
+      throw new Error(`Failed to create label directory: ${fullDir}. Check storage permissions.`);
     }
-    console.log('[StorageService] Date subdirectory ready');
+    console.log('[StorageService] Label subdirectory ready:', fullDir);
 
     // Step 4: Verify source file exists and has content
     console.log('[StorageService] Step 4: Verifying source image...');
@@ -368,8 +782,96 @@ export const configExists = async (key) => {
   }
 };
 
+/**
+ * Get common Android external storage paths to try
+ * @returns {string[]} Array of potential external storage paths
+ */
+export const getAndroidExternalStoragePaths = () => {
+  if (Platform.OS !== 'android') {
+    return [];
+  }
+
+  // Phone's Documents folder first (visible in file manager under Documents)
+  // Then Download, then root - requires storage permission / "Manage all files" on Android 11+
+  const paths = [
+    '/storage/emulated/0/Documents/AgriCapture',  // Documents – visible in file manager
+    '/storage/emulated/0/Download/AgriCapture',   // Download folder
+    '/storage/emulated/0/AgriCapture',
+    '/sdcard/Documents/AgriCapture',
+    '/sdcard/Download/AgriCapture',
+    '/sdcard/AgriCapture',
+    '/storage/sdcard0/AgriCapture',
+  ];
+
+  return paths;
+};
+
+/**
+ * Try to detect and set external storage automatically (Android only)
+ * @returns {Promise<{success: boolean, path?: string, error?: string}>}
+ */
+export const autoDetectExternalStorage = async () => {
+  if (Platform.OS !== 'android') {
+    return { success: false, error: 'Auto-detection only available on Android' };
+  }
+
+  console.log('[StorageService] === Auto-detecting External Storage ===');
+  const paths = getAndroidExternalStoragePaths();
+  
+  for (const path of paths) {
+    try {
+      console.log('[StorageService] Trying path:', path);
+      const info = await FileSystem.getInfoAsync(path);
+      
+      // If directory doesn't exist, try to create it
+      if (!info.exists) {
+        console.log('[StorageService] Path does not exist, attempting to create:', path);
+        try {
+          await FileSystem.makeDirectoryAsync(path, { intermediates: true });
+          const verifyInfo = await FileSystem.getInfoAsync(path);
+          if (!verifyInfo.exists) {
+            console.log('[StorageService] Failed to create path:', path);
+            continue;
+          }
+        } catch (createError) {
+          console.log('[StorageService] Cannot create path (may need permissions):', path, createError.message);
+          continue;
+        }
+      }
+      
+      // Try to write to verify it's writable
+      const testFile = `${path}/.storage_test_${Date.now()}`;
+      try {
+        await FileSystem.writeAsStringAsync(testFile, 'test');
+        const readBack = await FileSystem.readAsStringAsync(testFile);
+        await FileSystem.deleteAsync(testFile, { idempotent: true });
+        
+        if (readBack === 'test') {
+          // This path works!
+          console.log('[StorageService] ✓ Found writable external storage:', path);
+          const result = await setExternalStorageLocation(path);
+          if (result.success) {
+            console.log('[StorageService] ✓ External storage configured successfully');
+            return { success: true, path };
+          }
+        }
+      } catch (writeError) {
+        console.log('[StorageService] Path not writable:', path, writeError.message);
+        continue;
+      }
+    } catch (error) {
+      console.log('[StorageService] Error checking path:', path, error.message);
+      // Try next path
+      continue;
+    }
+  }
+
+  console.log('[StorageService] No accessible external storage found, will use documentDirectory');
+  return { success: false, error: 'No accessible external storage found' };
+};
+
 // Export the lazy-evaluated path functions
-export { getImagesDir, getDataDir, getConfigDir, getCacheDir, getExportsDir, getAppRootDir };
+export { getImagesDir, getImagesDirAsync, getDataDir, getDataDirAsync, getConfigDir, getCacheDir, getExportsDir, getAppRootDir, getAppRootDirAsync };
 export const isWebPlatform = () => isWeb;
 
 /**
@@ -651,6 +1153,10 @@ export const verifyAndInitializeStorage = async () => {
     return { success: true, platform: 'web', message: 'Web platform - no verification needed' };
   }
 
+  // Clear base storage cache so we use current config (external vs internal)
+  baseStorageDirCache = null;
+  baseStorageDirPromise = null;
+
   const results = {
     success: true,
     verified: [],
@@ -668,38 +1174,100 @@ export const verifyAndInitializeStorage = async () => {
   }
   console.log('[StorageService] documentDirectory:', FileSystem.documentDirectory);
 
-  // Step 2: Create/verify each required directory
-  console.log('[StorageService] Step 2: Creating/verifying directories...');
-  for (const dir of getRequiredDirectories()) {
-    try {
-      const info = await FileSystem.getInfoAsync(dir);
-      if (!info.exists) {
-        console.log('[StorageService] Creating directory:', dir);
-        await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-
-        // Verify creation
-        const verifyInfo = await FileSystem.getInfoAsync(dir);
-        if (verifyInfo.exists) {
-          results.created.push(dir);
-          console.log('[StorageService] Successfully created:', dir);
-        } else {
-          throw new Error('Directory creation verification failed');
-        }
-      } else {
-        results.verified.push(dir);
-        console.log('[StorageService] Directory exists:', dir);
+  // Step 2: On Android, try Documents/Download so CSV and images are visible in file manager
+  if (Platform.OS === 'android') {
+    const storageConfig = await loadConfig('storage_location');
+    if (!storageConfig?.externalPath) {
+      console.log('[StorageService] Trying external storage (Documents/Download)...');
+      const autoDetectResult = await autoDetectExternalStorage();
+      if (autoDetectResult.success) {
+        console.log('[StorageService] ✓ Using external storage:', autoDetectResult.path);
       }
-    } catch (error) {
-      results.success = false;
-      results.errors.push({ path: dir, error: error.message });
-      console.error('[StorageService] Failed to create/verify:', dir, error.message);
     }
   }
 
-  // Step 3: Test write capability
-  console.log('[StorageService] Step 3: Testing write capability...');
+  // Step 3: Create/verify each required directory
+  console.log('[StorageService] Step 3: Creating/verifying directories...');
+  const directories = [
+    { name: 'App Root', getPath: () => getAppRootDirAsync() },
+    { name: 'Images', getPath: () => getImagesDirAsync() },
+    { name: 'Data', getPath: () => getDataDirAsync() },
+    { name: 'Config', getPath: () => getConfigDirAsync() },
+    { name: 'Cache', getPath: () => getAppRootDirAsync().then(p => `${p}cache/`) },
+    { name: 'Exports', getPath: () => getAppRootDirAsync().then(p => `${p}exports/`) },
+  ];
+
+  for (const { name, getPath } of directories) {
+    try {
+      const dir = await getPath();
+      const info = await FileSystem.getInfoAsync(dir);
+      if (!info.exists) {
+        console.log('[StorageService] Creating directory:', name, '-', dir);
+        const created = await ensureDir(dir, 3);
+        if (created) {
+          // Verify creation
+          const verifyInfo = await FileSystem.getInfoAsync(dir);
+          if (verifyInfo.exists) {
+            results.created.push(dir);
+            console.log('[StorageService] ✓ Successfully created:', name, '-', dir);
+          } else {
+            throw new Error('Directory creation verification failed');
+          }
+        } else {
+          throw new Error('Directory creation failed after retries');
+        }
+      } else {
+        results.verified.push(dir);
+        console.log('[StorageService] ✓ Directory exists:', name, '-', dir);
+      }
+    } catch (error) {
+      results.success = false;
+      const dir = await getPath().catch(() => 'unknown');
+      results.errors.push({ path: dir, error: error.message });
+      console.error('[StorageService] ✗ Failed to create/verify:', name, '-', dir, error.message);
+    }
+  }
+
+  // Get storage location info
+  const storageInfo = await getStorageLocationInfo();
+  results.storageLocation = storageInfo.type;
+  results.storagePath = storageInfo.fullPath;
+  console.log('[StorageService] Storage location:', storageInfo.type, '-', storageInfo.fullPath);
+
+  // Step 4: Verify all directories exist and are accessible (use async paths = external when configured)
+  console.log('[StorageService] Step 4: Verifying all directories are accessible...');
+  const verifyDirs = [
+    () => getAppRootDirAsync(),
+    () => getImagesDirAsync(),
+    () => getDataDirAsync(),
+    () => getConfigDirAsync(),
+    () => getAppRootDirAsync().then(p => `${p}cache/`),
+    () => getAppRootDirAsync().then(p => `${p}exports/`),
+  ];
+  for (const getDir of verifyDirs) {
+    try {
+      const dir = await getDir();
+      const info = await FileSystem.getInfoAsync(dir);
+      if (!info.exists || !info.isDirectory) {
+        console.error('[StorageService] Directory verification failed:', dir);
+        results.errors.push({ path: dir, error: 'Directory does not exist or is not accessible' });
+        results.success = false;
+      } else {
+        console.log('[StorageService] ✓ Verified directory:', dir);
+      }
+    } catch (error) {
+      const dir = await getDir().catch(() => 'unknown');
+      console.error('[StorageService] Error verifying directory:', dir, error.message);
+      results.errors.push({ path: dir, error: error.message });
+      results.success = false;
+    }
+  }
+
+  // Step 5: Test write capability (use async path so we test external storage when configured)
+  console.log('[StorageService] Step 5: Testing write capability...');
   try {
-    const testFile = `${getAppRootDir()}.storage_test`;
+    const appRoot = await getAppRootDirAsync();
+    const testFile = `${appRoot}.storage_test`;
     const testContent = `test_${Date.now()}`;
     await FileSystem.writeAsStringAsync(testFile, testContent);
     const readBack = await FileSystem.readAsStringAsync(testFile);
@@ -707,7 +1275,7 @@ export const verifyAndInitializeStorage = async () => {
 
     if (readBack === testContent) {
       results.writeTest = 'passed';
-      console.log('[StorageService] Write test PASSED');
+      console.log('[StorageService] Write test PASSED at', appRoot);
     } else {
       results.writeTest = 'failed - content mismatch';
       results.success = false;

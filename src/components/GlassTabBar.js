@@ -13,7 +13,8 @@ const TAB_CONFIG = [
   { name: 'Capture', icon: 'camera', iconOutline: 'camera-outline' },
   { name: 'Review', icon: 'images', iconOutline: 'images-outline' },
   { name: 'Data', icon: 'grid', iconOutline: 'grid-outline' },
-  { name: 'Sync', icon: 'share-social', iconOutline: 'share-social-outline' },
+  { name: 'Export', icon: 'archive', iconOutline: 'archive-outline' },
+  { name: 'SoilTest', icon: 'flask', iconOutline: 'flask-outline' },
   { name: 'Setup', icon: 'settings', iconOutline: 'settings-outline' },
 ];
 

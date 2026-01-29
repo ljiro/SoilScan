@@ -342,11 +342,10 @@ export default function CaptureScreen({ navigation, route }) {
     setIsCapturing(true);
 
     try {
-      // Target dimensions based on quality setting (1:1 square aspect ratio)
-      const targetSize = imageQuality === '720p' ? 720 : 1080;
-      const targetWidth = targetSize;
-      const targetHeight = targetSize;
-      const targetAspect = 1; // 1:1 square
+      // Target dimensions based on quality: 720p = 1280×720, 1080p = 1920×1080 (16:9)
+      const targetWidth = imageQuality === '720p' ? 1280 : 1920;
+      const targetHeight = imageQuality === '720p' ? 720 : 1080;
+      const targetAspect = targetWidth / targetHeight; // 16:9
       const compressionQuality = imageQuality === '720p' ? 0.7 : 0.85;
 
       console.log('[CaptureScreen] STEP 2: Taking picture - target dimensions:', targetWidth, 'x', targetHeight);
@@ -368,8 +367,34 @@ export default function CaptureScreen({ navigation, route }) {
       console.log('[CaptureScreen] STEP 2: Raw photo has EXIF:', !!rawPhoto.exif);
 
       // Calculate center crop to match target aspect ratio without distortion
+      // Note: ImageManipulator may interpret dimensions differently due to EXIF orientation
+      // If EXIF orientation exists, ImageManipulator might swap width/height internally
       const srcWidth = rawPhoto.width;
       const srcHeight = rawPhoto.height;
+      const hasExif = !!rawPhoto.exif;
+      const exifOrientation = rawPhoto.exif?.Orientation;
+      
+      console.log('[CaptureScreen] Source image dimensions from camera:', srcWidth, 'x', srcHeight);
+      console.log('[CaptureScreen] EXIF present:', hasExif, 'Orientation:', exifOrientation);
+      
+      // If EXIF orientation is 90 or 270 degrees, dimensions might be swapped by ImageManipulator
+      // Be extra conservative in this case, or skip cropping entirely
+      const mightSwapDimensions = exifOrientation === 6 || exifOrientation === 8 || 
+                                  exifOrientation === 5 || exifOrientation === 7;
+      
+      // If EXIF orientation exists and might cause issues, skip cropping to avoid ImageManipulator errors
+      // We'll just resize instead, which always works
+      // TEMPORARY: Skip cropping entirely if EXIF is present to avoid ImageManipulator crashes
+      // ImageManipulator seems to have issues with crop bounds when EXIF orientation is present
+      const skipCropDueToExif = hasExif; // Skip crop if ANY EXIF data is present
+      
+      if (skipCropDueToExif) {
+        console.warn('[CaptureScreen] EXIF data present - skipping crop to avoid ImageManipulator errors, will just resize');
+        console.warn('[CaptureScreen] This ensures reliable image processing without crashes');
+      } else if (mightSwapDimensions) {
+        console.warn('[CaptureScreen] EXIF orientation may cause dimension swap, using extra conservative crop');
+      }
+      
       const srcAspect = srcWidth / srcHeight;
 
       let cropOriginX = 0;
@@ -378,35 +403,155 @@ export default function CaptureScreen({ navigation, route }) {
       let cropHeight = srcHeight;
 
       if (srcAspect > targetAspect) {
-        // Source is wider - crop sides
-        cropWidth = Math.round(srcHeight * targetAspect);
-        cropOriginX = Math.round((srcWidth - cropWidth) / 2);
+        // Source is wider - crop sides to make it square
+        cropWidth = Math.floor(srcHeight * targetAspect);
+        cropOriginX = Math.floor((srcWidth - cropWidth) / 2);
       } else if (srcAspect < targetAspect) {
-        // Source is taller - crop top/bottom
-        cropHeight = Math.round(srcWidth / targetAspect);
-        cropOriginY = Math.round((srcHeight - cropHeight) / 2);
+        // Source is taller - crop top/bottom to make it square
+        cropHeight = Math.floor(srcWidth / targetAspect);
+        cropOriginY = Math.floor((srcHeight - cropHeight) / 2);
       }
 
-      console.log('[CaptureScreen] Crop: origin=', cropOriginX, cropOriginY, 'size=', cropWidth, 'x', cropHeight);
+      // CRITICAL: Validate and clamp crop bounds to ensure they never exceed image dimensions
+      // ImageManipulator can be very strict, so we use a large safety margin
+      // Some devices/Android versions may report different bitmap dimensions than expected
+      const SAFETY_MARGIN = 10; // Use 10px margin to avoid boundary issues
+      
+      // Convert to integers immediately
+      cropOriginX = Math.floor(cropOriginX);
+      cropOriginY = Math.floor(cropOriginY);
+      cropWidth = Math.floor(cropWidth);
+      cropHeight = Math.floor(cropHeight);
+
+      // Clamp origin to valid range with safety margin
+      cropOriginX = Math.max(0, Math.min(cropOriginX, srcWidth - SAFETY_MARGIN - 1));
+      cropOriginY = Math.max(0, Math.min(cropOriginY, srcHeight - SAFETY_MARGIN - 1));
+      
+      // Calculate maximum allowed dimensions from current origin (with safety margin)
+      const maxAllowedWidth = Math.max(1, srcWidth - cropOriginX - SAFETY_MARGIN);
+      const maxAllowedHeight = Math.max(1, srcHeight - cropOriginY - SAFETY_MARGIN);
+      
+      // Clamp dimensions to fit within available space
+      cropWidth = Math.max(1, Math.min(cropWidth, maxAllowedWidth));
+      cropHeight = Math.max(1, Math.min(cropHeight, maxAllowedHeight));
+
+      // Final validation - ensure we never exceed bounds (with safety margin)
+      if (cropOriginX + cropWidth > srcWidth - SAFETY_MARGIN) {
+        cropWidth = Math.max(1, srcWidth - cropOriginX - SAFETY_MARGIN);
+      }
+      if (cropOriginY + cropHeight > srcHeight - SAFETY_MARGIN) {
+        cropHeight = Math.max(1, srcHeight - cropOriginY - SAFETY_MARGIN);
+      }
+
+      // Ensure all values are valid integers
+      cropOriginX = Math.floor(Math.max(0, cropOriginX));
+      cropOriginY = Math.floor(Math.max(0, cropOriginY));
+      cropWidth = Math.floor(Math.max(1, cropWidth));
+      cropHeight = Math.floor(Math.max(1, cropHeight));
+
+      // Final bounds check - if still invalid, use full image
+      if (cropOriginX + cropWidth > srcWidth - SAFETY_MARGIN || 
+          cropOriginY + cropHeight > srcHeight - SAFETY_MARGIN || 
+          cropOriginX < 0 || cropOriginY < 0 || cropWidth < 1 || cropHeight < 1) {
+        console.warn('[CaptureScreen] Crop validation failed after all checks, using full image');
+        cropOriginX = 0;
+        cropOriginY = 0;
+        cropWidth = srcWidth;
+        cropHeight = srcHeight;
+      }
+
+      // Final validation before passing to ImageManipulator
+      const finalX = cropOriginX;
+      const finalY = cropOriginY;
+      const finalW = cropWidth;
+      const finalH = cropHeight;
+      const xPlusWidth = finalX + finalW;
+      const yPlusHeight = finalY + finalH;
+
+      console.log('[CaptureScreen] Crop: origin=', finalX, finalY, 'size=', finalW, 'x', finalH);
+      console.log('[CaptureScreen] Source dimensions:', srcWidth, 'x', srcHeight);
+      console.log('[CaptureScreen] Final validation: x+width=', xPlusWidth, '<=', srcWidth, xPlusWidth <= srcWidth ? '✓' : '✗', 'y+height=', yPlusHeight, '<=', srcHeight, yPlusHeight <= srcHeight ? '✓' : '✗');
+
+      // If validation fails, skip cropping entirely
+      if (xPlusWidth > srcWidth || yPlusHeight > srcHeight || finalX < 0 || finalY < 0 || finalW < 1 || finalH < 1) {
+        console.error('[CaptureScreen] Crop validation failed - skipping crop, will just resize');
+        cropOriginX = 0;
+        cropOriginY = 0;
+        cropWidth = srcWidth;
+        cropHeight = srcHeight;
+      }
 
       // Apply center crop then resize to exact target dimensions
       let processedPhoto;
       try {
+        const manipulations = [];
+        
+        // Only add crop if we have valid bounds and the image needs cropping
+        // Skip crop entirely if EXIF orientation might cause issues
+        const needsCrop = !skipCropDueToExif && (cropOriginX > 0 || cropOriginY > 0 || cropWidth < srcWidth || cropHeight < srcHeight);
+        
+        // Very strict validation with additional safety margin for ImageManipulator
+        // Use larger safety margin if EXIF might cause dimension issues
+        const CROP_SAFETY = mightSwapDimensions ? 20 : 10; // Larger margin if EXIF orientation present
+        const cropIsValid = cropOriginX >= 0 && cropOriginY >= 0 && 
+                           cropOriginX + cropWidth <= srcWidth - CROP_SAFETY && 
+                           cropOriginY + cropHeight <= srcHeight - CROP_SAFETY &&
+                           cropWidth > CROP_SAFETY && cropHeight > CROP_SAFETY;
+
+        if (needsCrop && cropIsValid) {
+          // Final integer values with additional safety margin
+          const safeX = Math.floor(cropOriginX);
+          const safeY = Math.floor(cropOriginY);
+          // Reduce dimensions by safety margin to ensure we never hit boundaries
+          const safeW = Math.floor(Math.max(1, cropWidth - CROP_SAFETY));
+          const safeH = Math.floor(Math.max(1, cropHeight - CROP_SAFETY));
+          
+          // ABSOLUTE FINAL VALIDATION - ensure values are definitely within bounds
+          // Use even more conservative bounds if EXIF orientation might cause issues
+          const extraMargin = mightSwapDimensions ? 15 : 5;
+          const finalX = Math.max(0, Math.min(safeX, srcWidth - extraMargin - 1));
+          const finalY = Math.max(0, Math.min(safeY, srcHeight - extraMargin - 1));
+          const finalW = Math.max(1, Math.min(safeW, srcWidth - finalX - extraMargin));
+          const finalH = Math.max(1, Math.min(safeH, srcHeight - finalY - extraMargin));
+          
+          // One more absolute check before passing to ImageManipulator
+          const xPlusW = finalX + finalW;
+          const yPlusH = finalY + finalH;
+          
+          console.log('[CaptureScreen] Pre-ImageManipulator validation:');
+          console.log('[CaptureScreen]   finalX:', finalX, 'finalW:', finalW, 'x+w:', xPlusW, 'srcWidth:', srcWidth, 'margin:', extraMargin);
+          console.log('[CaptureScreen]   finalY:', finalY, 'finalH:', finalH, 'y+h:', yPlusH, 'srcHeight:', srcHeight);
+          console.log('[CaptureScreen]   Valid:', xPlusW <= srcWidth - extraMargin, yPlusH <= srcHeight - extraMargin);
+          
+          // Use strict less-than with margin to account for ImageManipulator's internal handling
+          if (xPlusW < srcWidth - extraMargin && yPlusH < srcHeight - extraMargin && finalX >= 0 && finalY >= 0 && finalW > 0 && finalH > 0) {
+            manipulations.push({
+              crop: {
+                originX: finalX,
+                originY: finalY,
+                width: finalW,
+                height: finalH,
+              },
+            });
+            console.log('[CaptureScreen] ✓ Crop manipulation added:', { x: finalX, y: finalY, w: finalW, h: finalH });
+            console.log('[CaptureScreen] ✓ Final check: x+w=', xPlusW, '<', srcWidth - extraMargin, '✓', 'y+h=', yPlusH, '<', srcHeight - extraMargin, '✓');
+          } else {
+            console.error('[CaptureScreen] ✗ Crop bounds FAILED final validation, skipping crop');
+            console.error('[CaptureScreen]   x+w:', xPlusW, '>=', srcWidth - extraMargin, '?', xPlusW >= srcWidth - extraMargin);
+            console.error('[CaptureScreen]   y+h:', yPlusH, '>=', srcHeight - extraMargin, '?', yPlusH >= srcHeight - extraMargin);
+          }
+        } else {
+          console.log('[CaptureScreen] No crop needed or crop invalid, will just resize');
+          if (!needsCrop) console.log('[CaptureScreen]   Reason: No crop needed');
+          if (!cropIsValid) console.log('[CaptureScreen]   Reason: Crop validation failed');
+        }
+        
+        // Always resize to target dimensions
+        manipulations.push({ resize: { width: targetWidth, height: targetHeight } });
+        
         processedPhoto = await ImageManipulator.manipulateAsync(
           rawPhoto.uri,
-          [
-            // First: center crop to correct aspect ratio
-            {
-              crop: {
-                originX: cropOriginX,
-                originY: cropOriginY,
-                width: cropWidth,
-                height: cropHeight,
-              },
-            },
-            // Then: resize to exact target dimensions (no distortion since aspect matches)
-            { resize: { width: targetWidth, height: targetHeight } },
-          ],
+          manipulations,
           { compress: compressionQuality, format: ImageManipulator.SaveFormat.JPEG }
         );
         console.log('[CaptureScreen] Processed photo URI:', processedPhoto.uri);
@@ -541,11 +686,38 @@ export default function CaptureScreen({ navigation, route }) {
       }
 
       // Step 3: Save image to app storage
+      // Use first crop label for directory organization (or 'mixed_crops' if multiple)
+      const cropLabel = crops.length === 1 ? crops[0].label : null;
       console.log('[CaptureScreen] Saving image to storage...');
+      console.log('[CaptureScreen] Using crop label for directory:', cropLabel || 'mixed_crops');
+      
+      // Validate capturedImage exists before proceeding
+      if (!capturedImage || !capturedImage.uri) {
+        console.error('[CaptureScreen] No captured image available');
+        throw new Error('No captured image available to save');
+      }
+      
+      // Store image dimensions and URI before any operations
+      const imageWidth = capturedImage.width || '';
+      const imageHeight = capturedImage.height || '';
+      const sourceUri = capturedImage.uri;
+      
       let imagePath;
       try {
-        imagePath = await saveImage(capturedImage.uri, filename);
+        imagePath = await saveImage(sourceUri, filename, cropLabel);
         console.log('[CaptureScreen] Image saved successfully, path:', imagePath);
+        
+        // Clean up temporary camera cache file to free disk cache
+        // Do this AFTER saving but BEFORE clearing state
+        try {
+          if (sourceUri && sourceUri.includes('/cache/Camera/')) {
+            await FileSystem.deleteAsync(sourceUri, { idempotent: true });
+            console.log('[CaptureScreen] Deleted temporary camera cache file');
+          }
+        } catch (cleanupError) {
+          // Non-critical - cache cleanup failure is okay
+          console.log('[CaptureScreen] Cache cleanup note:', cleanupError.message);
+        }
       } catch (imageError) {
         console.error('[CaptureScreen] Image save failed:', imageError.message);
         throw new Error(`Image save failed: ${imageError.message}`);
@@ -574,8 +746,8 @@ export default function CaptureScreen({ navigation, route }) {
         shot_number: currentShot,
         shots_in_spot: shotsPerSpot,
         image_filename: imagePath,
-        image_width: capturedImage.width || '',
-        image_height: capturedImage.height || '',
+        image_width: imageWidth,
+        image_height: imageHeight,
         image_quality: imageQuality,
         capture_datetime: new Date().toISOString(),
         ...locationData,
@@ -646,11 +818,13 @@ export default function CaptureScreen({ navigation, route }) {
         console.log('[CaptureScreen] Next shot:', shotInfo.nextShot);
       }
 
-      // Reset for next capture
+      // Reset for next capture - clear image from memory AFTER everything is done
+      // This ensures the preview doesn't crash while saving
       setCapturedImage(null);
       setNotes('');
       setShowNotes(false);
       setStep('camera');
+      console.log('[CaptureScreen] Cleared image from memory to free RAM');
     } catch (error) {
       haptic('error');
       console.error('[CaptureScreen] Save error:', error.message);
@@ -869,6 +1043,17 @@ export default function CaptureScreen({ navigation, route }) {
   }
 
   // Preview view
+  // Safety check - if capturedImage is null, go back to camera
+  if (!capturedImage || !capturedImage.uri) {
+    console.warn('[CaptureScreen] Preview: capturedImage is null, returning to camera');
+    setStep('camera');
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <Animated.Image

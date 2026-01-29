@@ -8,6 +8,7 @@ import {
   Alert,
   ActivityIndicator,
   Animated,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useCameraPermissions } from 'expo-camera';
@@ -19,12 +20,14 @@ import AnimatedButton from '../components/AnimatedButton';
 import {
   savePermissionStatus,
   markOnboardingComplete,
+  requestStoragePermission,
+  checkStoragePermission,
+  createExternalStorageDirectory,
+  requestFileManagerAccess,
+  checkFileManagerAccess,
 } from '../services/permissionService';
-import { verifyAndInitializeStorage } from '../services/storageService';
-import { initCSV, verifyCSVStorage } from '../services/csvService';
+import { setExternalStorageLocation } from '../services/storageService';
 
-// Note: Storage permission is NOT needed - expo-file-system documentDirectory
-// is accessible without any permissions. Only Camera and Location need user consent.
 const PERMISSIONS = [
   {
     id: 'camera',
@@ -40,15 +43,22 @@ const PERMISSIONS = [
     iconName: 'location-outline',
     iconColor: colors.warning,
   },
+  {
+    id: 'storage',
+    title: 'File Manager Access',
+    description: 'Save images and data to device storage',
+    iconName: 'folder-outline',
+    iconColor: colors.primary,
+  },
 ];
 
 export default function PermissionOnboarding({ onComplete }) {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  // Storage is always true - documentDirectory doesn't need permissions
+  // Storage permission is needed on Android for external storage access
   const [permissions, setPermissions] = useState({
     camera: false,
     location: false,
-    storage: true, // Always available, no permission needed
+    storage: Platform.OS !== 'android', // Only Android needs storage permission
   });
   const [isLoading, setIsLoading] = useState(false);
 
@@ -101,11 +111,21 @@ export default function PermissionOnboarding({ onComplete }) {
   const checkExistingPermissions = async () => {
     try {
       const locationStatus = await Location.getForegroundPermissionsAsync();
+      
+      // Check storage permission on Android
+      let storageGranted = true;
+      if (Platform.OS === 'android') {
+        const storageStatus = await checkStoragePermission();
+        const fileManagerStatus = await checkFileManagerAccess();
+        // Consider granted if either standard storage or file manager access is granted
+        storageGranted = storageStatus.granted || fileManagerStatus.granted;
+      }
+      
       setPermissions(prev => ({
         ...prev,
         camera: cameraPermission?.granted || false,
         location: locationStatus.status === 'granted',
-        storage: true, // Always available
+        storage: storageGranted,
       }));
     } catch (error) {
       console.log('Error checking permissions:', error);
@@ -136,9 +156,37 @@ export default function PermissionOnboarding({ onComplete }) {
         console.warn('[PermissionOnboarding] Location permission permanently denied');
       }
 
-      // Storage is always available - documentDirectory doesn't need permissions
-      const storageGranted = true;
-      console.log('[PermissionOnboarding] Storage: always available (documentDirectory needs no permission)');
+      // Request storage and file manager access on Android
+      let storageGranted = true;
+      if (Platform.OS === 'android') {
+        console.log('[PermissionOnboarding] Requesting storage and file manager access...');
+        
+        // For Android 11+, request file manager access first
+        if (Platform.Version >= 30) {
+          const fileManagerResult = await requestFileManagerAccess();
+          console.log('[PermissionOnboarding] File manager access requested (user needs to enable in Settings)');
+        }
+        
+        // Request standard storage permissions
+        const storageResult = await requestStoragePermission();
+        storageGranted = storageResult.granted;
+        console.log('[PermissionOnboarding] Storage permission result:', storageGranted);
+        
+        if (storageGranted) {
+          // Create the external storage directory
+          console.log('[PermissionOnboarding] Creating external storage directory...');
+          const dirResult = await createExternalStorageDirectory();
+          if (dirResult.success) {
+            console.log('[PermissionOnboarding] ✓ External storage directory created:', dirResult.path);
+            // Configure the storage service to use this path
+            await setExternalStorageLocation(dirResult.path);
+          } else {
+            console.warn('[PermissionOnboarding] Failed to create external directory:', dirResult.error);
+          }
+        } else if (!storageResult.canAskAgain) {
+          console.warn('[PermissionOnboarding] Storage permission permanently denied');
+        }
+      }
 
       const newPermissions = {
         camera: cameraGranted,
@@ -153,7 +201,7 @@ export default function PermissionOnboarding({ onComplete }) {
       console.log('[PermissionOnboarding] Saving permission statuses...');
       await savePermissionStatus('camera', cameraGranted);
       await savePermissionStatus('location', locationGranted);
-      await savePermissionStatus('storage', true); // Always true
+      await savePermissionStatus('storage', storageGranted);
       await savePermissionStatus('permissions_summary', {
         ...newPermissions,
         completedAt: new Date().toISOString(),
@@ -162,11 +210,13 @@ export default function PermissionOnboarding({ onComplete }) {
       await markOnboardingComplete();
       console.log('[PermissionOnboarding] Onboarding marked as complete');
 
-      if (!cameraGranted || !locationGranted) {
+      const deniedPerms = [];
+      if (!cameraGranted) deniedPerms.push('Camera');
+      if (!locationGranted) deniedPerms.push('Location');
+      if (!storageGranted && Platform.OS === 'android') deniedPerms.push('File Manager Access');
+
+      if (deniedPerms.length > 0) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-        const deniedPerms = [];
-        if (!cameraGranted) deniedPerms.push('Camera');
-        if (!locationGranted) deniedPerms.push('Location');
         Alert.alert(
           'Some Permissions Denied',
           `${deniedPerms.join(' and ')} permission was denied. Some features may be limited. You can enable permissions later in device settings.`,
@@ -190,7 +240,7 @@ export default function PermissionOnboarding({ onComplete }) {
   const skipPermissions = async () => {
     Alert.alert(
       'Skip Permissions?',
-      'Camera and location features will not work without permissions. You can enable them later in settings.',
+      'Camera, location, and file manager access features will not work without permissions. You can enable them later in settings.',
       [
         { text: 'Go Back', style: 'cancel' },
         {
@@ -201,7 +251,7 @@ export default function PermissionOnboarding({ onComplete }) {
             await savePermissionStatus('permissions_summary', {
               camera: false,
               location: false,
-              storage: true, // Always available
+              storage: Platform.OS !== 'android', // Only Android needs storage permission
               skipped: true,
               completedAt: new Date().toISOString(),
             });
@@ -232,16 +282,38 @@ export default function PermissionOnboarding({ onComplete }) {
         if (!granted) {
           Alert.alert('Permission Denied', 'Location permission was denied. You can enable it in device settings.');
         }
+      } else if (permId === 'storage') {
+        if (Platform.OS === 'android') {
+          // For Android 11+, request file manager access first
+          if (Platform.Version >= 30) {
+            await requestFileManagerAccess();
+          }
+          
+          const result = await requestStoragePermission();
+          const granted = result.granted;
+          setPermissions(prev => ({ ...prev, storage: granted }));
+          await savePermissionStatus('storage', granted);
+          
+          if (granted) {
+            // Create the external storage directory
+            const dirResult = await createExternalStorageDirectory();
+            if (dirResult.success) {
+              console.log('[PermissionOnboarding] ✓ External storage directory created:', dirResult.path);
+              await setExternalStorageLocation(dirResult.path);
+            }
+          } else {
+            Alert.alert('Permission Denied', 'File manager access was denied. Images will be saved to internal storage only. You can enable it in device settings.');
+          }
+        }
       }
-      // Note: Storage doesn't need permission request - documentDirectory is always accessible
     } catch (error) {
       console.error('Error requesting permission:', error);
       Alert.alert('Error', 'Failed to request permission.');
     }
   };
 
-  // Only camera and location need user consent - storage is always available
-  const allGranted = permissions.camera && permissions.location;
+  // Check if all permissions are granted (storage only required on Android)
+  const allGranted = permissions.camera && permissions.location && permissions.storage;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -266,16 +338,17 @@ export default function PermissionOnboarding({ onComplete }) {
 
       {/* Permission List */}
       <View style={styles.permissionList}>
-        {PERMISSIONS.map((perm, index) => {
+        {PERMISSIONS.filter((p) => p.id !== 'storage' || Platform.OS === 'android').map((perm, index) => {
           const isGranted = permissions[perm.id];
+          const animIndex = PERMISSIONS.findIndex((p) => p.id === perm.id);
           return (
             <Animated.View
               key={perm.id}
               style={[
                 {
-                  opacity: itemAnimations[index],
+                  opacity: itemAnimations[animIndex],
                   transform: [{
-                    translateX: itemAnimations[index].interpolate({
+                    translateX: itemAnimations[animIndex].interpolate({
                       inputRange: [0, 1],
                       outputRange: [-50, 0],
                     }),

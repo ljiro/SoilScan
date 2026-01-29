@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { saveConfig, loadConfig, initStorage } from '../services/storageService';
+import { saveConfig, loadConfig, initStorage, createLabelBasedDirectories } from '../services/storageService';
 import { generateUUID } from '../utils/uuid';
 import * as Device from 'expo-device';
 import { MUNICIPALITIES, BARANGAYS } from '../constants/locations';
@@ -309,6 +309,16 @@ export default function SetupScreen() {
     if (!isMounted.current) return;
 
     if (result.success) {
+      // Create directories based on user labels
+      console.log('[SetupScreen] Creating label-based directories...');
+      const dirResult = await createLabelBasedDirectories();
+      if (dirResult.success) {
+        console.log('[SetupScreen] Directories created successfully:', dirResult.directories?.length || 0);
+      } else {
+        console.warn('[SetupScreen] Directory creation had issues:', dirResult.error);
+        // Don't fail the save if directory creation has issues - directories will be created on first image save
+      }
+
       // Update initial config reference
       initialConfig.current = config;
       setLastSavedAt(config.setupDate);

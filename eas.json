@@ -9,11 +9,7 @@
       "distribution": "internal"
     },
     "preview": {
-      "distribution": "internal",
-      "android": {
-        "buildType": "apk",
-        "credentialsSource": "local"
-      }
+      "distribution": "internal"
     },
     "production": {
       "autoIncrement": true

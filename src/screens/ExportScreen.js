@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
+  ScrollView,
   TouchableOpacity,
   StyleSheet,
   Alert,
   ActivityIndicator,
-  ScrollView,
   Animated,
   Easing,
   Platform,
@@ -17,9 +17,14 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as Haptics from 'expo-haptics';
 import JSZip from 'jszip';
-import { getCSVPath, readCSV, parseCSVContent } from '../services/csvService';
-import { getImagesDir } from '../services/storageService';
+import { getCSVPathAsync, readCSV, parseCSVContent, parseCSVToRecords, getCSVHeaders } from '../services/csvService';
+import { getImagesDir, getImagesDirAsync, getAppRootDirAsync, loadConfig, ensureDir } from '../services/storageService';
 import { fonts, fontSizes, colors, radius, spacing, shadows, layout } from '../constants/theme';
+import ExportRecordSelector from '../components/ExportRecordSelector';
+import ExportRecordsList from '../components/ExportRecordsList';
+
+const MAX_GROUPS_SELECTABLE = 20;
+const YIELD_MS = 50;
 
 // Debug logging helper - __DEV__ is a React Native global
 // eslint-disable-next-line no-undef
@@ -34,19 +39,66 @@ const logDebug = (message, data = null) => {
   }
 };
 
+const yieldToUI = () => new Promise((r) => setTimeout(r, YIELD_MS));
+
+/**
+ * Build location groups from records, matching ReviewScreen organization:
+ * Group by spot_number + municipality + barangay. Title = "1/La Trinidad/Balili".
+ */
+function buildLocationGroups(records) {
+  const map = new Map();
+  records.forEach((record) => {
+    const spot = record.spot_number?.toString()?.trim() || 'Unassigned';
+    const municipality = (record.municipality || '').trim();
+    const barangay = (record.barangay || '').trim();
+    const key = `${spot}|${municipality}|${barangay}`;
+    let title;
+    if (spot === 'Unassigned') {
+      title = 'Unassigned';
+    } else if (municipality && barangay) {
+      title = `${spot}/${municipality}/${barangay}`;
+    } else if (municipality) {
+      title = `${spot}/${municipality}`;
+    } else {
+      title = `Spot ${spot}`;
+    }
+    if (!map.has(key)) {
+      map.set(key, { key, title, spot, municipality, barangay, records: [] });
+    }
+    map.get(key).records.push(record);
+  });
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.spot === 'Unassigned') return 1;
+    if (b.spot === 'Unassigned') return -1;
+    const spotA = parseInt(a.spot, 10) || 0;
+    const spotB = parseInt(b.spot, 10) || 0;
+    return spotA - spotB || (a.title || '').localeCompare(b.title || '');
+  });
+}
+
 export default function ExportScreen({ navigation }) {
   const [stats, setStats] = useState({ records: 0, images: 0, csvSize: 0, imagesSize: 0 });
   const [isExporting, setIsExporting] = useState(false);
-  const [isExportingZip, setIsExportingZip] = useState(false);
-  const [exportProgress, setExportProgress] = useState(0);
+  const [organizerInfo, setOrganizerInfo] = useState(null);
+  const [records, setRecords] = useState([]);
+  const [selectedGroupKeys, setSelectedGroupKeys] = useState(new Set());
+  const [zipProgress, setZipProgress] = useState(null);
+  const [recordsLoaded, setRecordsLoaded] = useState(false);
+
+  const groups = React.useMemo(() => buildLocationGroups(records), [records]);
+  const selectedRecords = React.useMemo(
+    () => groups.filter((g) => selectedGroupKeys.has(g.key)).flatMap((g) => g.records),
+    [groups, selectedGroupKeys]
+  );
+  const selectedRecordCount = selectedRecords.length;
 
   // Animation values
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentSlide = useRef(new Animated.Value(30)).current;
-  const progressWidth = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     loadStats();
+    loadOrganizerInfo();
     // Smooth entrance animation (no bounce)
     Animated.parallel([
       Animated.timing(contentOpacity, {
@@ -66,9 +118,167 @@ export default function ExportScreen({ navigation }) {
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
       loadStats();
+      loadOrganizerInfo();
+      loadRecords();
     });
     return unsubscribe;
   }, [navigation]);
+
+  const loadRecords = useCallback(async () => {
+    try {
+      setRecordsLoaded(false);
+      const csvContent = await readCSV();
+      const list = parseCSVToRecords(csvContent);
+      setRecords(list);
+      setSelectedGroupKeys(new Set());
+    } catch (error) {
+      console.error('[ExportScreen] Error loading records:', error);
+      setRecords([]);
+    }
+    setRecordsLoaded(true);
+  }, []);
+
+  const resolveImagePath = useCallback(async (imageFilename) => {
+    if (!imageFilename || !imageFilename.trim()) return null;
+    const clean = imageFilename.trim().replace(/^["']|["']$/g, '');
+    if (clean.startsWith('file://') || clean.startsWith('/')) return clean;
+    const appRoot = await getAppRootDirAsync();
+    const path = clean.startsWith('images/') ? `${appRoot}${clean}` : `${appRoot}images/${clean}`;
+    return path;
+  }, []);
+
+  const toggleGroup = useCallback((groupKey) => {
+    setSelectedGroupKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else if (next.size < MAX_GROUPS_SELECTABLE) next.add(groupKey);
+      return next;
+    });
+  }, []);
+
+  const selectAllGroups = useCallback(() => {
+    const keys = new Set(groups.slice(0, MAX_GROUPS_SELECTABLE).map((g) => g.key));
+    setSelectedGroupKeys(keys);
+  }, [groups]);
+
+  const clearSelection = useCallback(() => setSelectedGroupKeys(new Set()), []);
+
+  const buildCsvSubset = useCallback((headers, selectedRecords) => {
+    const escape = (v) => {
+      if (v == null || v === undefined) return '';
+      v = String(v).replace(/\r\n/g, ' ').replace(/\r/g, ' ').replace(/\n/g, ' ');
+      if (v.includes(',') || v.includes('"')) v = `"${v.replace(/"/g, '""')}"`;
+      return v;
+    };
+    const headerLine = headers.join(',');
+    const rows = selectedRecords.map((r) => headers.map((h) => escape(r[h])).join(','));
+    return [headerLine, ...rows].join('\n');
+  }, []);
+
+  const exportZIP = useCallback(async () => {
+    if (selectedRecordCount === 0) {
+      Alert.alert('No selection', 'Select at least one location (e.g. 1/La Trinidad/Balili) to export its records and images.');
+      return;
+    }
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch (_) {}
+    setIsExporting(true);
+    setZipProgress({ current: 0, total: selectedRecordCount, phase: 'Preparing...' });
+    await yieldToUI();
+
+    try {
+      const headers = getCSVHeaders();
+      const csvSubset = buildCsvSubset(headers, selectedRecords);
+
+      const zip = new JSZip();
+      zip.file('agricapture_collections.csv', csvSubset);
+
+      const appRoot = await getAppRootDirAsync();
+      const exportsDir = `${appRoot}exports/`;
+      await ensureDir(exportsDir);
+
+      let done = 0;
+      for (let i = 0; i < selectedRecords.length; i++) {
+        setZipProgress({ current: i + 1, total: selectedRecords.length, phase: 'Adding images...' });
+        await yieldToUI();
+        const record = selectedRecords[i];
+        const fn = record.image_filename;
+        if (!fn || !fn.trim()) {
+          done++;
+          continue;
+        }
+        const path = await resolveImagePath(fn);
+        if (!path) {
+          done++;
+          continue;
+        }
+        try {
+          const info = await FileSystem.getInfoAsync(path);
+          if (!info.exists) {
+            done++;
+            continue;
+          }
+          const base64 = await FileSystem.readAsStringAsync(path, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          const baseName = fn.replace(/^.*[/\\]/, '') || `image_${record.uuid || i}.jpg`;
+          zip.file(baseName, base64, { base64: true });
+        } catch (_) {
+          // Skip missing or unreadable image
+        }
+        done++;
+      }
+
+      setZipProgress({ current: done, total: done, phase: 'Creating ZIP...' });
+      await yieldToUI();
+
+      const zipBlob = await zip.generateAsync(
+        { type: 'base64', compression: 'DEFLATE', compressionOptions: { level: 3 } }
+      );
+      const fileName = `SoilScan_export_${new Date().toISOString().slice(0, 10)}.zip`;
+      const outPath = `${exportsDir}${fileName}`;
+      await FileSystem.writeAsStringAsync(outPath, zipBlob, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      setZipProgress(null);
+      const available = await Sharing.isAvailableAsync();
+      if (available) {
+        await Sharing.shareAsync(outPath, {
+          mimeType: 'application/zip',
+          dialogTitle: 'Export ZIP',
+        });
+        try {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } catch (_) {}
+      } else {
+        Alert.alert('Export saved', `ZIP saved to exports folder: ${fileName}`);
+      }
+    } catch (error) {
+      console.error('[ExportScreen] ZIP export error:', error);
+      Alert.alert('Export failed', error.message || 'Could not create ZIP.');
+    } finally {
+      setIsExporting(false);
+      setZipProgress(null);
+    }
+  }, [selectedRecords, selectedRecordCount, resolveImagePath, buildCsvSubset]);
+
+  const loadOrganizerInfo = async () => {
+    try {
+      const config = await loadConfig('user_config');
+      if (config) {
+        setOrganizerInfo({
+          municipality: config.municipalityLabel || 'Not set',
+          barangay: config.barangayLabel || 'Not set',
+          farm: config.farmName || 'No farm name',
+          crops: config.selectedCropLabels || [],
+        });
+      }
+    } catch (error) {
+      console.error('[ExportScreen] Error loading organizer info:', error);
+    }
+  };
 
   const loadStats = async () => {
     try {
@@ -83,8 +293,8 @@ export default function ExportScreen({ navigation }) {
 
       logDebug(`CSV record count: ${recordCount} (total rows: ${rows.length})`);
 
-      // Get CSV file size
-      const csvPath = getCSVPath();
+      // Get CSV file size (async path so external storage is included)
+      const csvPath = await getCSVPathAsync();
       logDebug('CSV path:', csvPath);
 
       let csvSize = 0;
@@ -96,8 +306,8 @@ export default function ExportScreen({ navigation }) {
         logDebug('Error getting CSV info:', csvErr.message);
       }
 
-      // Count images and calculate total size
-      const imagesDir = getImagesDir();
+      // Count images and calculate total size (async path for external storage)
+      const imagesDir = await getImagesDirAsync();
       logDebug('Images directory:', imagesDir);
 
       let imageCount = 0;
@@ -155,7 +365,7 @@ export default function ExportScreen({ navigation }) {
 
     setIsExporting(true);
     try {
-      const csvPath = getCSVPath();
+      const csvPath = await getCSVPathAsync();
       const fileInfo = await FileSystem.getInfoAsync(csvPath);
 
       if (!fileInfo.exists) {
@@ -186,167 +396,8 @@ export default function ExportScreen({ navigation }) {
     setIsExporting(false);
   };
 
-  const collectAllImages = async (dir, images = []) => {
-    try {
-      const dirInfo = await FileSystem.getInfoAsync(dir);
-      if (!dirInfo.exists) {
-        logDebug('collectAllImages: Directory does not exist:', dir);
-        return images;
-      }
-
-      const items = await FileSystem.readDirectoryAsync(dir);
-      logDebug(`collectAllImages: Found ${items.length} items in ${dir}`);
-
-      for (const item of items) {
-        const itemPath = `${dir}${item}`;
-        const info = await FileSystem.getInfoAsync(itemPath);
-        if (info.isDirectory) {
-          await collectAllImages(`${itemPath}/`, images);
-        } else if (item.toLowerCase().endsWith('.jpg') || item.toLowerCase().endsWith('.jpeg')) {
-          // Get relative path from images directory
-          const relativePath = itemPath.replace(getImagesDir(), '');
-          images.push({ path: itemPath, relativePath });
-          logDebug(`Found image: ${relativePath}`);
-        }
-      }
-    } catch (error) {
-      logDebug('collectAllImages error:', error.message);
-    }
-    return images;
-  };
-
-  const exportZip = async () => {
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    } catch {
-      // Haptics may not be available on all devices - safe to ignore
-    }
-
-    setIsExportingZip(true);
-    setExportProgress(0);
-
-    try {
-      const zip = new JSZip();
-
-      // Add CSV file
-      const csvPath = getCSVPath();
-      const csvInfo = await FileSystem.getInfoAsync(csvPath);
-
-      if (!csvInfo.exists) {
-        Alert.alert('No Data', 'No data to export yet. Capture some photos first.');
-        setIsExportingZip(false);
-        return;
-      }
-
-      const csvContent = await FileSystem.readAsStringAsync(csvPath);
-      zip.file('agricapture_data.csv', csvContent);
-      setExportProgress(10);
-
-      // Animate progress bar
-      Animated.timing(progressWidth, {
-        toValue: 10,
-        duration: 200,
-        useNativeDriver: false,
-      }).start();
-
-      // Collect all images
-      const images = await collectAllImages(getImagesDir());
-      const totalImages = images.length;
-
-      if (totalImages > 0) {
-        const imagesFolder = zip.folder('images');
-
-        for (let i = 0; i < images.length; i++) {
-          const { path, relativePath } = images[i];
-
-          // Read image as base64
-          const imageData = await FileSystem.readAsStringAsync(path, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-
-          // Add to zip with folder structure preserved
-          imagesFolder.file(relativePath, imageData, { base64: true });
-
-          // Update progress (10-90% for images)
-          const progress = 10 + ((i + 1) / totalImages) * 80;
-          setExportProgress(Math.round(progress));
-
-          Animated.timing(progressWidth, {
-            toValue: progress,
-            duration: 100,
-            useNativeDriver: false,
-          }).start();
-        }
-      }
-
-      setExportProgress(95);
-      Animated.timing(progressWidth, {
-        toValue: 95,
-        duration: 100,
-        useNativeDriver: false,
-      }).start();
-
-      // Generate ZIP file
-      const zipContent = await zip.generateAsync({ type: 'base64' });
-
-      // Create timestamp for filename
-      const now = new Date();
-      const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
-
-      // Write ZIP file
-      const zipPath = `${FileSystem.cacheDirectory}AgriCapture_${timestamp}.zip`;
-      await FileSystem.writeAsStringAsync(zipPath, zipContent, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      // Verify ZIP file was created successfully
-      const zipInfo = await FileSystem.getInfoAsync(zipPath);
-      if (!zipInfo.exists || zipInfo.size === 0) {
-        throw new Error('Failed to create ZIP file - file is empty or does not exist');
-      }
-      logDebug('ZIP file created successfully', { path: zipPath, size: zipInfo.size });
-
-      setExportProgress(100);
-      Animated.timing(progressWidth, {
-        toValue: 100,
-        duration: 200,
-        useNativeDriver: false,
-      }).start();
-
-      // Share the ZIP file
-      const isAvailable = await Sharing.isAvailableAsync();
-      if (isAvailable) {
-        try {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        } catch {
-          // Haptics may not be available on all devices - safe to ignore
-        }
-
-        await Sharing.shareAsync(zipPath, {
-          mimeType: 'application/zip',
-          dialogTitle: 'Export to Google Drive',
-          UTI: 'public.zip-archive',
-        });
-        logDebug('ZIP file shared successfully');
-      } else {
-        Alert.alert('Error', 'Sharing is not available on this device');
-      }
-
-      // Clean up cache file after export (for Android SAF, the actual file is in user's chosen directory)
-      try {
-        await FileSystem.deleteAsync(zipPath, { idempotent: true });
-      } catch {
-        // Safe to ignore cleanup errors
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to create ZIP file: ' + error.message);
-      console.error(error);
-    }
-
-    setIsExportingZip(false);
-    setExportProgress(0);
-    progressWidth.setValue(0);
-  };
+  // ZIP export removed - images are now automatically organized in directories
+  // Users can access images directly from the organized folder structure
 
   const clearAllData = () => {
     try {
@@ -371,8 +422,8 @@ export default function ExportScreen({ navigation }) {
 
   const performClearData = async () => {
     try {
-      const csvPath = getCSVPath();
-      const imagesDir = getImagesDir();
+      const csvPath = await getCSVPathAsync();
+      const imagesDir = await getImagesDirAsync();
 
       // Delete CSV
       await FileSystem.deleteAsync(csvPath, { idempotent: true });
@@ -396,99 +447,137 @@ export default function ExportScreen({ navigation }) {
     }
   };
 
-  const progressInterpolate = progressWidth.interpolate({
-    inputRange: [0, 100],
-    outputRange: ['0%', '100%'],
-  });
+  // Progress bar removed - no longer needed without ZIP export
 
-  return (
-    <View style={styles.wrapper}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Export</Text>
-        <Text style={styles.headerSubtitle}>Backup and share your data</Text>
-      </View>
-
-      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-        <Animated.View
-          style={{
-            opacity: contentOpacity,
-            transform: [{ translateY: contentSlide }],
-          }}
-        >
-          {/* Stats */}
-          <View style={styles.statsCard}>
-          <Text style={styles.statsTitle}>Data Summary</Text>
-          <View style={styles.statsRow}>
-            <View style={styles.statItem}>
-              <Text style={styles.statNumber}>{stats.records}</Text>
-              <Text style={styles.statLabel}>Records</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statNumber}>{stats.images}</Text>
-              <Text style={styles.statLabel}>Images</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statNumber}>{stats.csvSize}</Text>
-              <Text style={styles.statLabel}>KB (CSV)</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statNumber}>{stats.imagesSize}</Text>
-              <Text style={styles.statLabel}>MB (Images)</Text>
-            </View>
+  const listHeader = (
+    <Animated.View
+      style={[
+        styles.container,
+        {
+          opacity: contentOpacity,
+          transform: [{ translateY: contentSlide }],
+        },
+      ]}
+    >
+      <View style={styles.statsCard}>
+        <Text style={styles.statsTitle}>Data Summary</Text>
+        <View style={styles.statsRow}>
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>{stats.records}</Text>
+            <Text style={styles.statLabel}>Records</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>{stats.images}</Text>
+            <Text style={styles.statLabel}>Images</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>{stats.csvSize}</Text>
+            <Text style={styles.statLabel}>KB (CSV)</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>{stats.imagesSize}</Text>
+            <Text style={styles.statLabel}>MB (Images)</Text>
           </View>
         </View>
+      </View>
 
-        {/* Google Drive Export */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Ionicons name="cloud-upload-outline" size={22} color={colors.primary} />
-            <Text style={styles.sectionTitle}>Export to Google Drive</Text>
-          </View>
-          <Text style={styles.sectionDescription}>
-            Create a ZIP file containing all CSV data and images, then upload to your Google Drive for backup.
-          </Text>
+      <ExportRecordSelector
+        maxSelectable={MAX_GROUPS_SELECTABLE}
+        recordsLoaded={recordsLoaded}
+        groups={groups}
+        selectedGroupKeys={selectedGroupKeys}
+        selectedRecordCount={selectedRecordCount}
+        onSelectAll={selectAllGroups}
+        onClear={clearSelection}
+      />
+    </Animated.View>
+  );
 
-          <TouchableOpacity
-            style={[
-              styles.exportButton,
-              styles.zipButton,
-              (isExportingZip || stats.records === 0) && styles.disabled,
-            ]}
-            onPress={exportZip}
-            disabled={isExportingZip || stats.records === 0}
-          >
-            {isExportingZip ? (
-              <View style={styles.progressContainer}>
-                <View style={styles.progressBar}>
-                  <Animated.View
-                    style={[
-                      styles.progressFill,
-                      { width: progressInterpolate },
-                    ]}
-                  />
-                </View>
-                <Text style={styles.progressText}>
-                  {exportProgress < 10
-                    ? 'Preparing...'
-                    : exportProgress < 95
-                    ? `Adding images... ${exportProgress}%`
-                    : 'Creating ZIP...'}
+  const listFooter = (
+    <View style={styles.container}>
+      {groups.length > 0 && (
+        <TouchableOpacity
+          style={[
+            styles.exportButton,
+            styles.zipButton,
+            (isExporting || selectedRecordCount === 0) && styles.disabled,
+          ]}
+          onPress={exportZIP}
+          disabled={isExporting || selectedRecordCount === 0}
+        >
+          {zipProgress ? (
+            <>
+              <ActivityIndicator color="#fff" size="small" />
+              <View style={styles.exportTextContainer}>
+                <Text style={styles.exportButtonText}>{zipProgress.phase}</Text>
+                <Text style={styles.exportSubtext}>
+                  {zipProgress.current} / {zipProgress.total}
                 </Text>
               </View>
-            ) : (
-              <>
-                <View style={styles.iconCircle}>
-                  <Ionicons name="archive-outline" size={24} color={colors.text.inverse} />
-                </View>
-                <View style={styles.exportTextContainer}>
-                  <Text style={styles.exportButtonText}>Export All (ZIP)</Text>
-                  <Text style={styles.exportSubtext}>CSV + {stats.images} images ({stats.imagesSize} MB)</Text>
-                </View>
-                <Ionicons name="share-outline" size={22} color={colors.text.inverse} />
-              </>
-            )}
-          </TouchableOpacity>
+            </>
+          ) : isExporting ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <View style={[styles.iconCircle, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
+                <Ionicons name="archive-outline" size={24} color={colors.text.inverse} />
+              </View>
+              <View style={styles.exportTextContainer}>
+                <Text style={styles.exportButtonText}>Export selected as ZIP</Text>
+                <Text style={styles.exportSubtext}>
+                  {selectedRecordCount} record(s) · images + CSV
+                </Text>
+              </View>
+              <Ionicons name="share-outline" size={22} color={colors.text.inverse} />
+            </>
+          )}
+        </TouchableOpacity>
+      )}
+
+      <View style={[styles.section, styles.sectionFirst]}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="folder-outline" size={22} color={colors.primary} />
+            <Text style={styles.sectionTitle}>Image Organization</Text>
+          </View>
+          <Text style={styles.sectionDescription}>
+            Images are automatically organized in directories based on your setup labels. No export needed - images are stored directly on your device.
+          </Text>
+
+          {organizerInfo && (
+            <View style={styles.organizerInfo}>
+              <View style={styles.organizerRow}>
+                <Ionicons name="location-outline" size={16} color={colors.text.secondary} />
+                <Text style={styles.organizerLabel}>Location:</Text>
+                <Text style={styles.organizerValue}>
+                  {organizerInfo.municipality} / {organizerInfo.barangay}
+                </Text>
+              </View>
+              <View style={styles.organizerRow}>
+                <Ionicons name="home-outline" size={16} color={colors.text.secondary} />
+                <Text style={styles.organizerLabel}>Farm:</Text>
+                <Text style={styles.organizerValue}>{organizerInfo.farm}</Text>
+              </View>
+              <View style={styles.organizerRow}>
+                <Ionicons name="leaf-outline" size={16} color={colors.text.secondary} />
+                <Text style={styles.organizerLabel}>Crops:</Text>
+                <Text style={styles.organizerValue}>
+                  {organizerInfo.crops.length > 0 
+                    ? organizerInfo.crops.join(', ') 
+                    : 'No crops selected'}
+                </Text>
+              </View>
+              <View style={styles.directoryPathBox}>
+                <Text style={styles.directoryPathLabel}>Directory Structure:</Text>
+                <Text style={styles.directoryPathText}>
+                  images/{'\n'}
+                  {'  '}└─ {organizerInfo.municipality.toLowerCase().replace(/\s+/g, '_')}/{'\n'}
+                  {'      '}└─ {organizerInfo.barangay.toLowerCase().replace(/\s+/g, '_')}/{'\n'}
+                  {'          '}└─ {organizerInfo.farm.toLowerCase().replace(/\s+/g, '_')}/{'\n'}
+                  {'              '}└─ [crop_name]/
+                </Text>
+              </View>
+            </View>
+          )}
         </View>
 
         {/* CSV Only Export */}
@@ -535,7 +624,7 @@ export default function ExportScreen({ navigation }) {
         <View style={styles.tipBox}>
           <Ionicons name="bulb-outline" size={20} color={colors.warning} />
           <Text style={styles.tipText}>
-            After exporting, select "Google Drive" from the share menu to upload your data for backup and sharing.
+            Images are automatically saved to organized directories when you capture them. The entire image collection is stored on your device's storage (not in RAM), organized by your setup labels.
           </Text>
         </View>
 
@@ -556,7 +645,28 @@ export default function ExportScreen({ navigation }) {
         </View>
 
         <View style={{ height: layout.contentPaddingBottom }} />
-      </Animated.View>
+    </View>
+  );
+
+  return (
+    <View style={styles.wrapper}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Export</Text>
+        <Text style={styles.headerSubtitle}>Backup and share your data</Text>
+      </View>
+      <ScrollView
+        style={styles.scrollArea}
+        contentContainerStyle={styles.mainScrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {listHeader}
+        <ExportRecordsList
+          groups={groups}
+          selectedGroupKeys={selectedGroupKeys}
+          maxSelectable={MAX_GROUPS_SELECTABLE}
+          onToggleGroup={toggleGroup}
+        />
+        {listFooter}
       </ScrollView>
     </View>
   );
@@ -584,6 +694,12 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     color: 'rgba(255,255,255,0.8)',
     marginTop: spacing.xs,
+  },
+  scrollArea: {
+    flex: 1,
+  },
+  mainScrollContent: {
+    paddingBottom: layout.contentPaddingBottom,
   },
   container: {
     flex: 1,
@@ -626,6 +742,9 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     marginBottom: spacing.lg,
     ...shadows.sm,
+  },
+  sectionFirst: {
+    marginTop: spacing.lg,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -684,27 +803,50 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     marginTop: 2,
   },
-  progressContainer: {
-    flex: 1,
-    paddingVertical: spacing.sm,
+  organizerInfo: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.background.secondary,
+    borderRadius: radius.md,
   },
-  progressBar: {
-    height: 8,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    borderRadius: radius.sm,
-    overflow: 'hidden',
+  organizerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: spacing.sm,
+    gap: spacing.sm,
   },
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.text.inverse,
-    borderRadius: radius.sm,
-  },
-  progressText: {
+  organizerLabel: {
     fontFamily: fonts.medium,
-    color: colors.text.inverse,
     fontSize: fontSizes.sm,
-    textAlign: 'center',
+    color: colors.text.secondary,
+    minWidth: 60,
+  },
+  organizerValue: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    color: colors.text.primary,
+    flex: 1,
+  },
+  directoryPathBox: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.background.tertiary,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  directoryPathLabel: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.xs,
+    color: colors.text.secondary,
+    marginBottom: spacing.xs,
+  },
+  directoryPathText: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    color: colors.text.tertiary,
+    fontFamily: 'monospace',
+    lineHeight: 18,
   },
   pathBox: {
     flexDirection: 'row',
