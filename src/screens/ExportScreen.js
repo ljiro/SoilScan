@@ -928,4 +928,63 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: spacing.sm,
   },
+  // Municipality selection styles
+  selectAllRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.background.secondary,
+    borderRadius: radius.md,
+    marginBottom: spacing.md,
+  },
+  selectAllText: {
+    flex: 1,
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+    color: colors.text.primary,
+    marginLeft: spacing.sm,
+  },
+  selectedCount: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    color: colors.text.secondary,
+  },
+  municipalityList: {
+    gap: spacing.xs,
+  },
+  municipalityItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.background.secondary,
+    borderRadius: radius.md,
+  },
+  municipalityName: {
+    flex: 1,
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.sm,
+    color: colors.text.primary,
+    marginLeft: spacing.sm,
+  },
+  municipalityRecords: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    color: colors.text.secondary,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: radius.sm,
+    borderWidth: 2,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background.primary,
+  },
+  checkboxSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
 });
