@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -68,13 +68,11 @@ const COLUMN_LABELS = {
 export default function DataViewerScreen({ navigation }) {
   const [headers, setHeaders] = useState([]);
   const [data, setData] = useState([]);
-  const [filteredData, setFilteredData] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDirection, setSortDirection] = useState('asc');
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [stats, setStats] = useState({ total: 0, filtered: 0 });
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -227,8 +225,6 @@ export default function DataViewerScreen({ navigation }) {
         logDebug('No data found in CSV');
         setHeaders([]);
         setData([]);
-        setFilteredData([]); // Fix race condition - set immediately
-        setStats({ total: 0, filtered: 0 });
         setIsLoading(false);
         return;
       }
@@ -240,8 +236,6 @@ export default function DataViewerScreen({ navigation }) {
       if (parsedRows.length <= 1) {
         logDebug('Only header row found, no data');
         setData([]);
-        setFilteredData([]); // Fix race condition - set immediately
-        setStats({ total: 0, filtered: 0 });
         setIsLoading(false);
         return;
       }
@@ -270,8 +264,6 @@ export default function DataViewerScreen({ navigation }) {
       }
 
       setData(rows);
-      setFilteredData(rows); // Fix race condition - set immediately with data
-      setStats({ total: rows.length, filtered: rows.length });
 
       // Get file modification time
       const csvPath = getCSVPath();
@@ -296,8 +288,6 @@ export default function DataViewerScreen({ navigation }) {
       setError(`Failed to load data: ${err.message}`);
       setHeaders([]);
       setData([]);
-      setFilteredData([]);
-      setStats({ total: 0, filtered: 0 });
     } finally {
       setIsLoading(false);
     }

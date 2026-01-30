@@ -10,6 +10,7 @@ import {
   Easing,
   Alert,
   TextInput,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -974,16 +975,25 @@ export default function SetupScreen({ navigation }) {
                 { transform: [{ scale: saveButtonScale }] },
               ]}
             >
-              <Ionicons
-                name={getSaveButtonIcon()}
-                size={22}
-                color={colors.text.inverse}
-              />
-              <Text style={styles.saveButtonText}>
-                {getSaveButtonText()}
-              </Text>
-            </Animated.View>
-          </TouchableOpacity>
+              <Animated.View
+                style={[
+                  styles.saveButton,
+                  getSaveButtonStyle(),
+                  (!canSave && saveStatus !== SAVE_STATUS.ERROR) && styles.saveButtonDisabled,
+                  { transform: [{ scale: saveButtonScale }] },
+                ]}
+              >
+                <Ionicons
+                  name={getSaveButtonIcon()}
+                  size={22}
+                  color={colors.text.inverse}
+                />
+                <Text style={styles.saveButtonText} numberOfLines={1}>
+                  {getSaveButtonText()}
+                </Text>
+              </Animated.View>
+            </TouchableOpacity>
+          </View>
 
           {!isComplete && (
             <View style={styles.hintBox}>
@@ -994,10 +1004,12 @@ export default function SetupScreen({ navigation }) {
             </View>
           )}
 
-          {/* Setup Summary */}
-          {isComplete && saveStatus === SAVE_STATUS.SAVED && (
+          {/* Setup Summary - show whenever complete so panel height stays consistent (gray vs orange) */}
+          {isComplete && (
             <View style={styles.summaryBox}>
-              <Text style={styles.summaryTitle}>Current Setup</Text>
+              <Text style={styles.summaryTitle}>
+                {saveStatus === SAVE_STATUS.SAVED ? 'Current Setup' : 'Setup (unsaved)'}
+              </Text>
               <View style={styles.summaryRow}>
                 <Ionicons name="location-outline" size={16} color={colors.text.secondary} />
                 <Text style={styles.summaryText}>
@@ -1182,10 +1194,22 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     color: colors.text.secondary,
   },
+  saveButtonWrapper: {
+    width: Dimensions.get('window').width - spacing.lg * 2,
+    height: 52,
+    alignSelf: 'center',
+  },
+  saveButtonTouchable: {
+    width: '100%',
+    height: '100%',
+  },
   saveButton: {
     flexDirection: 'row',
+    width: '100%',
+    height: '100%',
     backgroundColor: colors.primary,
-    padding: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 0,
     borderRadius: radius.xl,
     alignItems: 'center',
     justifyContent: 'center',

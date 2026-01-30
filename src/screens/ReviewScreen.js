@@ -257,27 +257,11 @@ export default function ReviewScreen({ navigation }) {
         const record = { ...parsedRecords[index] };
         record.id = index.toString();
 
-        // Verify image path and check if image exists
+        // Resolve image path for display. Existence is not checked here to avoid
+        // N filesystem calls on load (slows down with many records). The list
+        // shows the path; missing images will fail to load in the Image component.
         if (record.image_filename) {
-          logDebug(`Record ${index}: image_filename = "${record.image_filename}"`);
-          const imagePath = resolveImagePath(record.image_filename);
-          record._resolvedImagePath = imagePath;
-
-          // Check if image exists (async, store promise)
-          try {
-            const imageInfo = await FileSystem.getInfoAsync(imagePath);
-            record._imageExists = imageInfo.exists;
-            logDebug(`Record ${index}: Image exists = ${imageInfo.exists}, size = ${imageInfo.size || 0}`);
-            if (!imageInfo.exists) {
-              logDebug(`Image NOT found at: ${imagePath}`, { filename: record.image_filename });
-            }
-          } catch (err) {
-            record._imageExists = false;
-            logDebug(`Error checking image for record ${index}: ${err.message}`, { path: imagePath });
-          }
-        } else {
-          logDebug(`Record ${index}: No image_filename field`);
-          record._imageExists = false;
+          record._resolvedImagePath = resolveImagePath(record.image_filename);
         }
 
         data.push(record);
@@ -292,7 +276,7 @@ export default function ReviewScreen({ navigation }) {
           uuid: sortedData[0].uuid,
           image_filename: sortedData[0].image_filename,
           _resolvedImagePath: sortedData[0]._resolvedImagePath,
-          _imageExists: sortedData[0]._imageExists,
+          _resolvedImagePath: sortedData[0]._resolvedImagePath,
         });
       }
 

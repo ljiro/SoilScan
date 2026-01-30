@@ -8,10 +8,11 @@ import {
   Alert,
   ActivityIndicator,
   Animated,
-  Platform,
+  AppState,
+  Linking,
 } from 'react-native';
+import { Camera, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
-import { useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import * as MediaLibrary from 'expo-media-library';
 import * as Haptics from 'expo-haptics';
@@ -99,6 +100,16 @@ export default function PermissionOnboarding({ onComplete }) {
     }
   }, [cameraPermission]);
 
+  // When app returns from Settings, re-check permissions (camera, location)
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        checkExistingPermissions();
+      }
+    });
+    return () => sub?.remove();
+  }, []);
+
   const startEntranceAnimations = () => {
     // Header animation
     Animated.parallel([
@@ -127,6 +138,7 @@ export default function PermissionOnboarding({ onComplete }) {
 
   const checkExistingPermissions = async () => {
     try {
+      const cameraStatus = await Camera.getCameraPermissionsAsync();
       const locationStatus = await Location.getForegroundPermissionsAsync();
 
       // Check SAF status if supported
@@ -344,7 +356,14 @@ export default function PermissionOnboarding({ onComplete }) {
         setPermissions(prev => ({ ...prev, camera: granted }));
         await savePermissionStatus('camera', granted);
         if (!granted) {
-          Alert.alert('Permission Denied', 'Camera permission was denied. You can enable it in device settings.');
+          Alert.alert(
+            'Camera Permission Denied',
+            'You can enable it in device settings. When you return, we\'ll re-check and update.',
+            [
+              { text: 'OK', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            ]
+          );
         }
       } else if (permId === 'location') {
         const result = await Location.requestForegroundPermissionsAsync();
