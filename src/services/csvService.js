@@ -51,6 +51,15 @@ const getCSVFilePathAsync = async () => {
   return `${dir}agricapture_collections.csv`;
 };
 
+// In-memory cache to avoid re-reading and re-parsing the CSV on every operation.
+// Invalidated on any write (append, delete, update, reset, init).
+let csvCache = null;
+
+/** Clear CSV cache. Call after any write to the CSV file. */
+export const invalidateCSVCache = () => {
+  csvCache = null;
+};
+
 /**
  * Retry wrapper for async operations
  */
@@ -90,6 +99,7 @@ export const initCSV = async () => {
       await withRetry(async () => {
         await FileSystem.writeAsStringAsync(csvPath, CSV_HEADERS.join(',') + '\n');
       });
+      invalidateCSVCache();
 
       const verifyInfo = await FileSystem.getInfoAsync(csvPath);
       if (!verifyInfo.exists) {
@@ -141,7 +151,7 @@ export const appendToCSV = async (data) => {
     await withRetry(async () => {
       let existingContent = '';
       try {
-        existingContent = await FileSystem.readAsStringAsync(csvPath);
+        existingContent = await readCSV();
       } catch (readErr) {
         console.warn('[CSVService] Could not read existing CSV, starting fresh:', readErr.message);
         existingContent = CSV_HEADERS.join(',') + '\n';
@@ -151,6 +161,7 @@ export const appendToCSV = async (data) => {
       }
       const newContent = existingContent + row + '\n';
       await FileSystem.writeAsStringAsync(csvPath, newContent);
+      invalidateCSVCache();
       console.log('[CSVService] CSV written, previous size:', existingContent.length, 'new size:', newContent.length);
     });
 
@@ -164,19 +175,27 @@ export const appendToCSV = async (data) => {
 };
 
 /**
- * Read the entire CSV file contents
+ * Read the entire CSV file contents. Uses in-memory cache when valid to avoid
+ * repeated disk reads and parsing as data grows.
  * @returns {Promise<string>} CSV content string
  */
 export const readCSV = async () => {
   try {
     const csvPath = await getCSVFilePathAsync();
+    if (csvCache && csvCache.path === csvPath && csvCache.content != null) {
+      return csvCache.content;
+    }
     const fileInfo = await FileSystem.getInfoAsync(csvPath);
     if (!fileInfo.exists) {
       console.log('[CSVService] CSV file does not exist, returning headers only');
-      return CSV_HEADERS.join(',') + '\n';
+      const headersOnly = CSV_HEADERS.join(',') + '\n';
+      csvCache = { content: headersOnly, parsed: [CSV_HEADERS.slice()], path: csvPath };
+      return headersOnly;
     }
     const content = await FileSystem.readAsStringAsync(csvPath);
     console.log('[CSVService] Read CSV file, size:', content.length);
+    const parsed = parseCSVContent(content);
+    csvCache = { content, parsed, path: csvPath };
     return content;
   } catch (error) {
     console.error('[CSVService] Error reading CSV:', error.message);
@@ -282,6 +301,7 @@ export const resetCSV = async () => {
       await FileSystem.deleteAsync(csvPath, { idempotent: true });
     }
     await FileSystem.writeAsStringAsync(csvPath, CSV_HEADERS.join(',') + '\n');
+    invalidateCSVCache();
     const verifyInfo = await FileSystem.getInfoAsync(csvPath);
     if (!verifyInfo.exists) {
       throw new Error('Failed to create new CSV file');
@@ -294,14 +314,16 @@ export const resetCSV = async () => {
 };
 
 /**
- * Get record count from CSV
+ * Get record count from CSV (uses cache when available)
  * @returns {Promise<number>} Number of data rows (excluding header)
  */
 export const getRecordCount = async () => {
   try {
-    const content = await readCSV();
-    const rows = parseCSVContent(content);
-    return Math.max(0, rows.length - 1); // Subtract 1 for header row
+    await readCSV();
+    if (csvCache && csvCache.parsed) {
+      return Math.max(0, csvCache.parsed.length - 1);
+    }
+    return 0;
   } catch (error) {
     console.error('[CSVService] Error getting record count:', error.message);
     return 0;
@@ -376,37 +398,24 @@ export const deleteFromCSV = async (uuid) => {
 };
 
 /**
- * Get the highest spot number from the CSV
+ * Get the highest spot number from the CSV (uses cache when available)
  * @returns {Promise<number>} Highest spot number or 0 if no data
  */
 export const getLastSpotNumber = async () => {
   try {
-    const csvPath = await getCSVFilePathAsync();
-    const fileInfo = await FileSystem.getInfoAsync(csvPath);
-    if (!fileInfo.exists) {
-      console.log('[CSVService] CSV file does not exist, returning spot 0');
+    await readCSV();
+    if (!csvCache || !csvCache.parsed || csvCache.parsed.length <= 1) {
       return 0;
     }
-
-    const content = await FileSystem.readAsStringAsync(csvPath);
-    const rows = parseCSVContent(content);
-
-    if (rows.length <= 1) {
-      console.log('[CSVService] CSV has no data rows, returning spot 0');
-      return 0;
-    }
-
+    const rows = csvCache.parsed;
     const spotIndex = CSV_HEADERS.indexOf('spot_number');
     let maxSpot = 0;
-
-    // Skip header row (index 0)
     for (let i = 1; i < rows.length; i++) {
       const spotNum = parseInt(rows[i][spotIndex], 10);
       if (!isNaN(spotNum) && spotNum > maxSpot) {
         maxSpot = spotNum;
       }
     }
-
     console.log('[CSVService] Last spot number:', maxSpot);
     return maxSpot;
   } catch (error) {
@@ -453,27 +462,18 @@ export const getShotsForSpot = async (spotNumber) => {
 };
 
 /**
- * Get all existing shot numbers for a specific spot
+ * Get all existing shot numbers for a specific spot (uses cache when available)
  * @param {number} spotNumber - The spot number to check
  * @returns {Promise<number[]>} Array of existing shot numbers
  */
 export const getExistingShotsForSpot = async (spotNumber) => {
   try {
-    const csvPath = await getCSVFilePathAsync();
-    const fileInfo = await FileSystem.getInfoAsync(csvPath);
-    if (!fileInfo.exists) {
-      return [];
-    }
-
-    const content = await FileSystem.readAsStringAsync(csvPath);
-    const rows = parseCSVContent(content);
-
-    if (rows.length <= 1) return [];
-
+    await readCSV();
+    if (!csvCache || !csvCache.parsed || csvCache.parsed.length <= 1) return [];
+    const rows = csvCache.parsed;
     const spotIndex = CSV_HEADERS.indexOf('spot_number');
     const shotIndex = CSV_HEADERS.indexOf('shot_number');
     const shots = [];
-
     for (let i = 1; i < rows.length; i++) {
       const spotNum = parseInt(rows[i][spotIndex], 10);
       if (spotNum === spotNumber) {
@@ -481,7 +481,6 @@ export const getExistingShotsForSpot = async (spotNumber) => {
         shots.push(shotNum);
       }
     }
-
     console.log(`[CSVService] Existing shots for spot ${spotNumber}:`, shots.sort((a, b) => a - b));
     return shots.sort((a, b) => a - b);
   } catch (error) {
@@ -525,39 +524,25 @@ export const getNextAvailableShot = async (spotNumber, shotsPerSpot = 5) => {
 };
 
 /**
- * Get the maximum shot number for a specific spot
- * This is used to determine the next shot number after deletions
+ * Get the maximum shot number for a specific spot (uses cache when available)
  * @param {number} spotNumber - The spot number to check
  * @returns {Promise<number>} Maximum shot number for the spot (0 if no shots)
  */
 export const getMaxShotForSpot = async (spotNumber) => {
   try {
-    const csvPath = await getCSVFilePathAsync();
-    const fileInfo = await FileSystem.getInfoAsync(csvPath);
-    if (!fileInfo.exists) {
-      return 0;
-    }
-
-    const content = await FileSystem.readAsStringAsync(csvPath);
-    const rows = parseCSVContent(content);
-
-    if (rows.length <= 1) return 0;
-
+    await readCSV();
+    if (!csvCache || !csvCache.parsed || csvCache.parsed.length <= 1) return 0;
+    const rows = csvCache.parsed;
     const spotIndex = CSV_HEADERS.indexOf('spot_number');
     const shotIndex = CSV_HEADERS.indexOf('shot_number');
     let maxShot = 0;
-
-    // Skip header row (index 0)
     for (let i = 1; i < rows.length; i++) {
       const spotNum = parseInt(rows[i][spotIndex], 10);
       if (spotNum === spotNumber) {
         const shotNum = parseInt(rows[i][shotIndex], 10) || 0;
-        if (shotNum > maxShot) {
-          maxShot = shotNum;
-        }
+        if (shotNum > maxShot) maxShot = shotNum;
       }
     }
-
     console.log(`[CSVService] Max shot for spot ${spotNumber}:`, maxShot);
     return maxShot;
   } catch (error) {
@@ -626,6 +611,7 @@ export const updateCSVField = async (uuid, fieldName, newValue) => {
       await withRetry(async () => {
         await FileSystem.writeAsStringAsync(csvPath, csvLines.join('\n') + '\n');
       });
+      invalidateCSVCache();
       console.log('[CSVService] Field updated successfully');
     } else {
       console.log('[CSVService] UUID not found for update:', uuid);
@@ -713,6 +699,7 @@ export const updateCSVRow = async (uuid, newData) => {
     await withRetry(async () => {
       await FileSystem.writeAsStringAsync(csvPath, csvLines.join('\n') + '\n');
     });
+    invalidateCSVCache();
 
     console.log('[CSVService] Row updated successfully');
     return { success: true, oldData };

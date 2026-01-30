@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -68,15 +68,43 @@ const COLUMN_LABELS = {
 export default function DataViewerScreen({ navigation }) {
   const [headers, setHeaders] = useState([]);
   const [data, setData] = useState([]);
-  const [filteredData, setFilteredData] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDirection, setSortDirection] = useState('asc');
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [stats, setStats] = useState({ total: 0, filtered: 0 });
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Derived: filter and sort without extra state or effect (avoids redundant work as data grows)
+  const filteredData = useMemo(() => {
+    let result = [...data];
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(row =>
+        Object.values(row).some(value => String(value).toLowerCase().includes(query))
+      );
+    }
+    if (sortColumn) {
+      result.sort((a, b) => {
+        const aVal = a[sortColumn] || '';
+        const bVal = b[sortColumn] || '';
+        const aNum = parseFloat(aVal);
+        const bNum = parseFloat(bVal);
+        if (!isNaN(aNum) && !isNaN(bNum)) {
+          return sortDirection === 'asc' ? aNum - bNum : bNum - aNum;
+        }
+        const comparison = String(aVal).localeCompare(String(bVal));
+        return sortDirection === 'asc' ? comparison : -comparison;
+      });
+    }
+    return result;
+  }, [data, searchQuery, sortColumn, sortDirection]);
+
+  const stats = useMemo(() => ({
+    total: data.length,
+    filtered: filteredData.length,
+  }), [data.length, filteredData.length]);
 
   // Animation values
   const contentOpacity = useRef(new Animated.Value(0)).current;
@@ -108,10 +136,6 @@ export default function DataViewerScreen({ navigation }) {
     return unsubscribe;
   }, [navigation]);
 
-  useEffect(() => {
-    filterAndSortData();
-  }, [data, searchQuery, sortColumn, sortDirection]);
-
   const loadData = async () => {
     try {
       setIsLoading(true);
@@ -142,8 +166,6 @@ export default function DataViewerScreen({ navigation }) {
       if (parsedRows.length <= 1) {
         logDebug('Only header row found, no data');
         setData([]);
-        setFilteredData([]); // Fix race condition - set immediately
-        setStats({ total: 0, filtered: 0 });
         setIsLoading(false);
         return;
       }
@@ -198,49 +220,10 @@ export default function DataViewerScreen({ navigation }) {
       setError(`Failed to load data: ${err.message}`);
       setHeaders([]);
       setData([]);
-      setFilteredData([]);
-      setStats({ total: 0, filtered: 0 });
     } finally {
       setIsLoading(false);
     }
   };
-
-  const filterAndSortData = useCallback(() => {
-    let result = [...data];
-
-    // Apply search filter
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(row => {
-        return Object.values(row).some(value =>
-          String(value).toLowerCase().includes(query)
-        );
-      });
-    }
-
-    // Apply sorting
-    if (sortColumn) {
-      result.sort((a, b) => {
-        const aVal = a[sortColumn] || '';
-        const bVal = b[sortColumn] || '';
-
-        // Try numeric comparison
-        const aNum = parseFloat(aVal);
-        const bNum = parseFloat(bVal);
-
-        if (!isNaN(aNum) && !isNaN(bNum)) {
-          return sortDirection === 'asc' ? aNum - bNum : bNum - aNum;
-        }
-
-        // String comparison
-        const comparison = String(aVal).localeCompare(String(bVal));
-        return sortDirection === 'asc' ? comparison : -comparison;
-      });
-    }
-
-    setFilteredData(result);
-    setStats(prev => ({ ...prev, filtered: result.length }));
-  }, [data, searchQuery, sortColumn, sortDirection]);
 
   const onRefresh = async () => {
     setRefreshing(true);
