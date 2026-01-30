@@ -3,6 +3,7 @@ import {
   View,
   Text,
   ScrollView,
+  FlatList,
   TouchableOpacity,
   StyleSheet,
   RefreshControl,
@@ -408,9 +409,12 @@ export default function DataViewerScreen({ navigation }) {
               ))}
             </View>
 
-            {/* Data Rows - Vertical Scroll */}
-            <ScrollView
+            {/* Data Rows - Virtualized vertical list for hundreds of records */}
+            <FlatList
+              data={filteredData}
+              keyExtractor={(item) => String(item._rowIndex)}
               style={styles.dataScrollView}
+              contentContainerStyle={styles.dataScrollContent}
               showsVerticalScrollIndicator={true}
               refreshControl={
                 <RefreshControl
@@ -420,11 +424,12 @@ export default function DataViewerScreen({ navigation }) {
                   colors={[colors.primary]}
                 />
               }
-              contentContainerStyle={styles.dataScrollContent}
-            >
-              {filteredData.map((row, rowIndex) => (
+              initialNumToRender={15}
+              maxToRenderPerBatch={15}
+              windowSize={7}
+              removeClippedSubviews={true}
+              renderItem={({ item: row, index: rowIndex }) => (
                 <View
-                  key={row._rowIndex}
                   style={[
                     styles.dataRow,
                     rowIndex % 2 === 0 && styles.evenRow,
@@ -445,8 +450,8 @@ export default function DataViewerScreen({ navigation }) {
                     </View>
                   ))}
                 </View>
-              ))}
-            </ScrollView>
+              )}
+            />
           </View>
         </ScrollView>
       </View>

@@ -42,7 +42,11 @@
         "android.permission.CAMERA",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.HIGH_SAMPLING_RATE_SENSORS"
+        "android.permission.HIGH_SAMPLING_RATE_SENSORS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.MANAGE_EXTERNAL_STORAGE"
       ],
       "package": "com.agricapture.app",
       "edgeToEdgeEnabled": true
@@ -52,9 +56,8 @@
     },
     "extra": {
       "eas": {
-        "projectId": "49773efe-ed5b-4fbd-a38f-00e972fc7698"
+        "projectId": "30b1049c-65bb-44b0-8a42-3698a070736a"
       }
-    },
-    "owner": "cheerio"
+    }
   }
 }

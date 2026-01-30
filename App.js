@@ -19,7 +19,9 @@ import CaptureScreen from './src/screens/CaptureScreen';
 import SetupScreen from './src/screens/SetupScreen';
 import ReviewScreen from './src/screens/ReviewScreen';
 import DataViewerScreen from './src/screens/DataViewerScreen';
-import SyncScreen from './src/screens/SyncScreen';
+import ExportScreen from './src/screens/ExportScreen';
+import SoilTestScreen from './src/screens/SoilTestScreen';
+// SyncScreen removed - export/share functionality no longer needed
 import PermissionOnboarding from './src/screens/PermissionOnboarding';
 import OnboardingGuide from './src/screens/OnboardingGuide';
 import TermsAgreement, { hasAcceptedTerms } from './src/screens/TermsAgreement';
@@ -65,10 +67,20 @@ export default function App() {
 
   const initializeApp = async () => {
     try {
-      // Initialize app directories on startup
-      await initializeAppDirectories();
+      console.log('[App] === Initializing App ===');
+      
+      // Initialize app directories on startup (with retry logic for APK builds)
+      console.log('[App] Step 1: Initializing app directories...');
+      const dirResult = await initializeAppDirectories();
+      if (!dirResult.success) {
+        console.error('[App] Directory initialization had errors:', dirResult.errors);
+        // Continue anyway - will retry after permissions
+      } else {
+        console.log('[App] ✓ Directories initialized successfully');
+      }
 
       // Clear expired cache items
+      console.log('[App] Step 2: Clearing expired cache...');
       await clearExpiredCache();
 
       // Check if terms have been accepted
@@ -83,8 +95,17 @@ export default function App() {
       const permissionComplete = await isOnboardingComplete();
       setShowPermissionOnboarding(!permissionComplete);
 
-      // Check if guide has been completed
+      // When user has already completed onboarding, re-verify storage on every app start
+      // so we pick up external storage if they enabled "Manage all files" later
       if (permissionComplete) {
+        try {
+          const storageResult = await verifyAndInitializeStorage();
+          if (storageResult.success && storageResult.storageLocation === 'external') {
+            console.log('[App] ✓ Using external storage at startup:', storageResult.storagePath);
+          }
+        } catch (e) {
+          console.warn('[App] Storage re-verify at startup:', e?.message);
+        }
         const config = await loadConfig('user_config');
 
         // Check if SAF (public storage) has been set up
@@ -114,9 +135,12 @@ export default function App() {
 
     try {
       // CRITICAL: Re-initialize storage AFTER permissions are granted
-      // This ensures directories are created with proper permissions
+      // This ensures directories are created with proper permissions and in device storage
+      console.log('[App] Attempting to use device storage (external storage)...');
       const storageResult = await verifyAndInitializeStorage();
       console.log('[App] Storage initialization result:', JSON.stringify(storageResult));
+      console.log('[App] Storage location:', storageResult.storageLocation || 'internal');
+      console.log('[App] Storage path:', storageResult.storagePath || 'not set');
 
       if (!storageResult.success) {
         console.error('[App] Storage initialization failed:', storageResult.errors);
@@ -229,7 +253,8 @@ export default function App() {
               <Tab.Screen name="Capture" component={CaptureScreen} />
               <Tab.Screen name="Review" component={ReviewScreen} />
               <Tab.Screen name="Data" component={DataViewerScreen} />
-              <Tab.Screen name="Sync" component={SyncScreen} />
+              <Tab.Screen name="Export" component={ExportScreen} />
+              <Tab.Screen name="SoilTest" component={SoilTestScreen} />
               <Tab.Screen name="Setup" component={SetupScreen} />
             </Tab.Navigator>
             <NetworkMonitor />

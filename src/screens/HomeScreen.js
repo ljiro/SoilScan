@@ -11,7 +11,17 @@ import {
   Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+// #region agent log
+try {
+  fetch('http://127.0.0.1:7242/ingest/6cdea6d5-66f8-4b81-8d70-27705f4a1cd7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomeScreen.js:14',message:'Attempting to import @expo/vector-icons',data:{packageName:'@expo/vector-icons'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+} catch(e) {}
+// #endregion
 import { Ionicons } from '@expo/vector-icons';
+// #region agent log
+try {
+  fetch('http://127.0.0.1:7242/ingest/6cdea6d5-66f8-4b81-8d70-27705f4a1cd7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomeScreen.js:15',message:'Import successful',data:{IoniconsType:typeof Ionicons},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+} catch(e) {}
+// #endregion
 import { initStorage, loadConfig, verifyAndInitializeStorage } from '../services/storageService';
 import { initCSV, verifyCSVStorage, getRecordCount } from '../services/csvService';
 import { fonts, fontSizes, colors, radius, shadows, spacing, layout } from '../constants/theme';
@@ -53,9 +63,26 @@ export default function HomeScreen({ navigation }) {
   }, [navigation]);
 
   const initialize = async () => {
-    await initStorage();
-    await initCSV();
-    await checkSetup();
+    try {
+      console.log('[HomeScreen] Initializing storage...');
+      const storageResult = await initStorage();
+      if (storageResult && !storageResult.success) {
+        console.error('[HomeScreen] Storage initialization had errors:', storageResult.failed);
+      }
+      
+      console.log('[HomeScreen] Initializing CSV...');
+      await initCSV();
+      
+      await checkSetup();
+    } catch (error) {
+      console.error('[HomeScreen] Initialization error:', error);
+      // Try to verify storage anyway
+      try {
+        await verifyAndInitializeStorage();
+      } catch (verifyError) {
+        console.error('[HomeScreen] Storage verification also failed:', verifyError);
+      }
+    }
   };
 
   const checkSetup = async () => {
