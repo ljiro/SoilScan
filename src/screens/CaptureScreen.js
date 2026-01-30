@@ -100,6 +100,9 @@ export default function CaptureScreen({ navigation, route }) {
   const previewSlide = useRef(new Animated.Value(300)).current;
   const saveScale = useRef(new Animated.Value(1)).current;
 
+  // Orientation tracking ref (must be declared before initialize function uses it)
+  const orientationUnsubscribe = useRef(null);
+
   useEffect(() => {
     initialize();
     return cleanup;
@@ -320,8 +323,6 @@ export default function CaptureScreen({ navigation, route }) {
     glow(gpsGlow).start();
     console.log('[CaptureScreen] === Initialization Complete ===');
   };
-
-  const orientationUnsubscribe = useRef(null);
 
   const cleanup = () => {
     if (locationSubscription.current) {

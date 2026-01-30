@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -88,6 +88,8 @@ export default function DataViewerScreen({ navigation }) {
     hasPrevPage: false
   });
   const [usePagination, setUsePagination] = useState(true);
+  const [filteredData, setFilteredData] = useState([]);
+  const [stats, setStats] = useState({ total: 0, filtered: 0 });
 
   // Animation values
   const contentOpacity = useRef(new Animated.Value(0)).current;

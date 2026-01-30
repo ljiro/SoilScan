@@ -491,6 +491,7 @@ export const deleteFromCSV = async (uuid) => {
       await withRetry(async () => {
         await FileSystem.writeAsStringAsync(csvPath, csvLines.join('\n') + '\n');
       });
+      invalidateCSVCache();
       console.log('[CSVService] Row deleted successfully, remaining rows:', remainingRows.length - 1);
     } else {
       console.log('[CSVService] UUID not found in CSV:', uuid);

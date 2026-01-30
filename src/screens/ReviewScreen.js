@@ -276,7 +276,7 @@ export default function ReviewScreen({ navigation }) {
           uuid: sortedData[0].uuid,
           image_filename: sortedData[0].image_filename,
           _resolvedImagePath: sortedData[0]._resolvedImagePath,
-          _resolvedImagePath: sortedData[0]._resolvedImagePath,
+          municipality: sortedData[0].municipality,
         });
       }
 
@@ -324,25 +324,6 @@ export default function ReviewScreen({ navigation }) {
       setStats({ total: 0, today: 0, thisWeek: 0 });
       setLoading(false);
     }
-  };
-
-  const parseCSVLine = (line) => {
-    const result = [];
-    let current = '';
-    let inQuotes = false;
-
-    for (const char of line) {
-      if (char === '"') {
-        inQuotes = !inQuotes;
-      } else if (char === ',' && !inQuotes) {
-        result.push(current);
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-    result.push(current);
-    return result;
   };
 
   const applyFilters = useCallback(() => {
