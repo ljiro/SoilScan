@@ -975,25 +975,16 @@ export default function SetupScreen({ navigation }) {
                 { transform: [{ scale: saveButtonScale }] },
               ]}
             >
-              <Animated.View
-                style={[
-                  styles.saveButton,
-                  getSaveButtonStyle(),
-                  (!canSave && saveStatus !== SAVE_STATUS.ERROR) && styles.saveButtonDisabled,
-                  { transform: [{ scale: saveButtonScale }] },
-                ]}
-              >
-                <Ionicons
-                  name={getSaveButtonIcon()}
-                  size={22}
-                  color={colors.text.inverse}
-                />
-                <Text style={styles.saveButtonText} numberOfLines={1}>
-                  {getSaveButtonText()}
-                </Text>
-              </Animated.View>
-            </TouchableOpacity>
-          </View>
+              <Ionicons
+                name={getSaveButtonIcon()}
+                size={22}
+                color={colors.text.inverse}
+              />
+              <Text style={styles.saveButtonText} numberOfLines={1}>
+                {getSaveButtonText()}
+              </Text>
+            </Animated.View>
+          </TouchableOpacity>
 
           {!isComplete && (
             <View style={styles.hintBox}>
