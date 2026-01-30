@@ -1248,7 +1248,7 @@ const styles = StyleSheet.create({
   // Offline banner
   offlineBanner: {
     position: 'absolute',
-    bottom: 290,
+    bottom: 314,
     left: spacing.lg,
     right: spacing.lg,
     flexDirection: 'row',
@@ -1279,7 +1279,7 @@ const styles = StyleSheet.create({
   // GPS bar - glassmorphism style
   gpsBar: {
     position: 'absolute',
-    bottom: 190,
+    bottom: 214,
     left: spacing.lg,
     right: spacing.lg,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -1311,7 +1311,7 @@ const styles = StyleSheet.create({
   // Capture button
   captureArea: {
     position: 'absolute',
-    bottom: 100,
+    bottom: 124,
     left: 0,
     right: 0,
     alignItems: 'center',
@@ -1468,7 +1468,7 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    minHeight: 238, // Space above square
+    minHeight: 214, // Space above square (moved box up slightly)
   },
   captureBoxMiddle: {
     flexDirection: 'row',
@@ -1483,7 +1483,7 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    minHeight: 272, // Space for bottom controls
+    minHeight: 296, // Space for bottom controls (moved box up slightly)
   },
   captureBox: {
     // Fixed square size - 280px works well on most devices

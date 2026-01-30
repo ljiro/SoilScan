@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "AgriCapture",
-    "slug": "AgriCapture",
+    "slug": "AgriCapture-v2",
     "scheme": "agricapture",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -53,7 +53,7 @@
     },
     "extra": {
       "eas": {
-        "projectId": "30b1049c-65bb-44b0-8a42-3698a070736a"
+        "projectId": "8996121e-95d9-479e-ba44-ca0f0ff4d52c"
       }
     }
   }

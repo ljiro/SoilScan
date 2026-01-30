@@ -153,8 +153,6 @@ export default function DataViewerScreen({ navigation }) {
         logDebug('No data found in CSV');
         setHeaders([]);
         setData([]);
-        setFilteredData([]); // Fix race condition - set immediately
-        setStats({ total: 0, filtered: 0 });
         setIsLoading(false);
         return;
       }
@@ -194,8 +192,6 @@ export default function DataViewerScreen({ navigation }) {
       }
 
       setData(rows);
-      setFilteredData(rows); // Fix race condition - set immediately with data
-      setStats({ total: rows.length, filtered: rows.length });
 
       // Get file modification time
       const csvPath = getCSVPath();
