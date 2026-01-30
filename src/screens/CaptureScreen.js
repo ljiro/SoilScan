@@ -114,6 +114,13 @@ export default function CaptureScreen({ navigation, route }) {
     return unsubscribe;
   }, [navigation, currentSpot, shotsPerSpot]);
 
+  // Reset shutter flash when showing camera (avoids stuck white overlay after capture → preview → camera)
+  useEffect(() => {
+    if (step === 'camera') {
+      shutterFlash.setValue(0);
+    }
+  }, [step]);
+
   // Refresh shot state from CSV (handles deletions)
   const refreshShotState = async () => {
     if (isRetakeMode) return; // Don't refresh in retake mode
@@ -366,34 +373,35 @@ export default function CaptureScreen({ navigation, route }) {
       console.log('[CaptureScreen] STEP 2: Raw photo URI:', rawPhoto.uri);
       console.log('[CaptureScreen] STEP 2: Raw photo has EXIF:', !!rawPhoto.exif);
 
-      // Calculate center crop to match target aspect ratio without distortion
-      // Note: ImageManipulator may interpret dimensions differently due to EXIF orientation
-      // If EXIF orientation exists, ImageManipulator might swap width/height internally
-      const srcWidth = rawPhoto.width;
-      const srcHeight = rawPhoto.height;
-      const hasExif = !!rawPhoto.exif;
+      // Portrait fix: apply EXIF rotation first so image is upright (fixes "depth" messed up in portrait)
+      // In portrait, sensor captures sideways; EXIF 6/8 = rotate 90°/270° for correct display
+      let workUri = rawPhoto.uri;
+      let srcWidth = rawPhoto.width;
+      let srcHeight = rawPhoto.height;
       const exifOrientation = rawPhoto.exif?.Orientation;
-      
-      console.log('[CaptureScreen] Source image dimensions from camera:', srcWidth, 'x', srcHeight);
-      console.log('[CaptureScreen] EXIF present:', hasExif, 'Orientation:', exifOrientation);
-      
-      // If EXIF orientation is 90 or 270 degrees, dimensions might be swapped by ImageManipulator
-      // Be extra conservative in this case, or skip cropping entirely
-      const mightSwapDimensions = exifOrientation === 6 || exifOrientation === 8 || 
-                                  exifOrientation === 5 || exifOrientation === 7;
-      
-      // If EXIF orientation exists and might cause issues, skip cropping to avoid ImageManipulator errors
-      // We'll just resize instead, which always works
-      // TEMPORARY: Skip cropping entirely if EXIF is present to avoid ImageManipulator crashes
-      // ImageManipulator seems to have issues with crop bounds when EXIF orientation is present
-      const skipCropDueToExif = hasExif; // Skip crop if ANY EXIF data is present
-      
-      if (skipCropDueToExif) {
-        console.warn('[CaptureScreen] EXIF data present - skipping crop to avoid ImageManipulator errors, will just resize');
-        console.warn('[CaptureScreen] This ensures reliable image processing without crashes');
-      } else if (mightSwapDimensions) {
-        console.warn('[CaptureScreen] EXIF orientation may cause dimension swap, using extra conservative crop');
+      const rotationDegrees = exifOrientation === 6 ? 90 : exifOrientation === 8 ? 270 : exifOrientation === 3 ? 180 : 0;
+      if (rotationDegrees !== 0) {
+        try {
+          const rotated = await ImageManipulator.manipulateAsync(
+            workUri,
+            [{ rotate: rotationDegrees }],
+            { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
+          );
+          workUri = rotated.uri;
+          srcWidth = rotated.width;
+          srcHeight = rotated.height;
+          console.log('[CaptureScreen] Applied EXIF rotation (portrait fix):', rotationDegrees, '° →', srcWidth, 'x', srcHeight);
+        } catch (rotErr) {
+          console.warn('[CaptureScreen] EXIF rotation failed, using original:', rotErr.message);
+        }
       }
+
+      const hasExif = !!rawPhoto.exif;
+      const mightSwapDimensions = exifOrientation === 6 || exifOrientation === 8 || exifOrientation === 5 || exifOrientation === 7;
+      const skipCropDueToExif = false; // Safe to crop after rotation
+
+      console.log('[CaptureScreen] Source image dimensions:', srcWidth, 'x', srcHeight);
+      console.log('[CaptureScreen] EXIF present:', hasExif, 'Orientation:', exifOrientation);
       
       const srcAspect = srcWidth / srcHeight;
 
@@ -490,41 +498,20 @@ export default function CaptureScreen({ navigation, route }) {
         // Skip crop entirely if EXIF orientation might cause issues
         const needsCrop = !skipCropDueToExif && (cropOriginX > 0 || cropOriginY > 0 || cropWidth < srcWidth || cropHeight < srcHeight);
         
-        // Very strict validation with additional safety margin for ImageManipulator
-        // Use larger safety margin if EXIF might cause dimension issues
-        const CROP_SAFETY = mightSwapDimensions ? 20 : 10; // Larger margin if EXIF orientation present
-        const cropIsValid = cropOriginX >= 0 && cropOriginY >= 0 && 
-                           cropOriginX + cropWidth <= srcWidth - CROP_SAFETY && 
-                           cropOriginY + cropHeight <= srcHeight - CROP_SAFETY &&
-                           cropWidth > CROP_SAFETY && cropHeight > CROP_SAFETY;
+        // Validation: crop must be inside image (allow full-width/full-height crop to avoid stretch in portrait)
+        const cropIsValid = cropOriginX >= 0 && cropOriginY >= 0 &&
+                           cropWidth >= 1 && cropHeight >= 1 &&
+                           cropOriginX + cropWidth <= srcWidth &&
+                           cropOriginY + cropHeight <= srcHeight;
 
         if (needsCrop && cropIsValid) {
-          // Final integer values with additional safety margin
-          const safeX = Math.floor(cropOriginX);
-          const safeY = Math.floor(cropOriginY);
-          // Reduce dimensions by safety margin to ensure we never hit boundaries
-          const safeW = Math.floor(Math.max(1, cropWidth - CROP_SAFETY));
-          const safeH = Math.floor(Math.max(1, cropHeight - CROP_SAFETY));
-          
-          // ABSOLUTE FINAL VALIDATION - ensure values are definitely within bounds
-          // Use even more conservative bounds if EXIF orientation might cause issues
-          const extraMargin = mightSwapDimensions ? 15 : 5;
-          const finalX = Math.max(0, Math.min(safeX, srcWidth - extraMargin - 1));
-          const finalY = Math.max(0, Math.min(safeY, srcHeight - extraMargin - 1));
-          const finalW = Math.max(1, Math.min(safeW, srcWidth - finalX - extraMargin));
-          const finalH = Math.max(1, Math.min(safeH, srcHeight - finalY - extraMargin));
-          
-          // One more absolute check before passing to ImageManipulator
+          const finalX = Math.floor(Math.max(0, cropOriginX));
+          const finalY = Math.floor(Math.max(0, cropOriginY));
+          const finalW = Math.floor(Math.max(1, Math.min(cropWidth, srcWidth - finalX)));
+          const finalH = Math.floor(Math.max(1, Math.min(cropHeight, srcHeight - finalY)));
           const xPlusW = finalX + finalW;
           const yPlusH = finalY + finalH;
-          
-          console.log('[CaptureScreen] Pre-ImageManipulator validation:');
-          console.log('[CaptureScreen]   finalX:', finalX, 'finalW:', finalW, 'x+w:', xPlusW, 'srcWidth:', srcWidth, 'margin:', extraMargin);
-          console.log('[CaptureScreen]   finalY:', finalY, 'finalH:', finalH, 'y+h:', yPlusH, 'srcHeight:', srcHeight);
-          console.log('[CaptureScreen]   Valid:', xPlusW <= srcWidth - extraMargin, yPlusH <= srcHeight - extraMargin);
-          
-          // Use strict less-than with margin to account for ImageManipulator's internal handling
-          if (xPlusW < srcWidth - extraMargin && yPlusH < srcHeight - extraMargin && finalX >= 0 && finalY >= 0 && finalW > 0 && finalH > 0) {
+          if (xPlusW <= srcWidth && yPlusH <= srcHeight && finalW > 0 && finalH > 0) {
             manipulations.push({
               crop: {
                 originX: finalX,
@@ -534,11 +521,6 @@ export default function CaptureScreen({ navigation, route }) {
               },
             });
             console.log('[CaptureScreen] ✓ Crop manipulation added:', { x: finalX, y: finalY, w: finalW, h: finalH });
-            console.log('[CaptureScreen] ✓ Final check: x+w=', xPlusW, '<', srcWidth - extraMargin, '✓', 'y+h=', yPlusH, '<', srcHeight - extraMargin, '✓');
-          } else {
-            console.error('[CaptureScreen] ✗ Crop bounds FAILED final validation, skipping crop');
-            console.error('[CaptureScreen]   x+w:', xPlusW, '>=', srcWidth - extraMargin, '?', xPlusW >= srcWidth - extraMargin);
-            console.error('[CaptureScreen]   y+h:', yPlusH, '>=', srcHeight - extraMargin, '?', yPlusH >= srcHeight - extraMargin);
           }
         } else {
           console.log('[CaptureScreen] No crop needed or crop invalid, will just resize');
@@ -550,7 +532,7 @@ export default function CaptureScreen({ navigation, route }) {
         manipulations.push({ resize: { width: targetWidth, height: targetHeight } });
         
         processedPhoto = await ImageManipulator.manipulateAsync(
-          rawPhoto.uri,
+          workUri,
           manipulations,
           { compress: compressionQuality, format: ImageManipulator.SaveFormat.JPEG }
         );
@@ -566,12 +548,13 @@ export default function CaptureScreen({ navigation, route }) {
         };
       }
 
-      // Create photo object
+      // Preview = original (raw). Store = processed (crop + resize to 16:9).
       const photo = {
+        previewUri: rawPhoto.uri,
         uri: processedPhoto.uri,
         width: processedPhoto.width || targetWidth,
         height: processedPhoto.height || targetHeight,
-        exif: rawPhoto.exif, // Preserve EXIF from original
+        exif: rawPhoto.exif,
       };
 
       console.log('[CaptureScreen] Photo ready for preview');
@@ -579,7 +562,8 @@ export default function CaptureScreen({ navigation, route }) {
       console.log('[CaptureScreen] Photo URI:', photo.uri);
       console.log('[CaptureScreen] Photo has EXIF:', !!photo.exif);
 
-      // Shutter flash
+      // Shutter flash (reset first so we don't build on a stuck value from rapid/previous capture)
+      shutterFlash.setValue(0);
       Animated.sequence([
         Animated.timing(shutterFlash, { toValue: 1, duration: 50, useNativeDriver: true }),
         Animated.timing(shutterFlash, { toValue: 0, duration: 150, useNativeDriver: true }),
@@ -1042,9 +1026,9 @@ export default function CaptureScreen({ navigation, route }) {
     );
   }
 
-  // Preview view
-  // Safety check - if capturedImage is null, go back to camera
-  if (!capturedImage || !capturedImage.uri) {
+  // Preview view - show original (raw) image; store processed (16:9) on save
+  const previewUri = capturedImage.previewUri ?? capturedImage.uri;
+  if (!capturedImage || !previewUri) {
     console.warn('[CaptureScreen] Preview: capturedImage is null, returning to camera');
     setStep('camera');
     return (
@@ -1057,8 +1041,9 @@ export default function CaptureScreen({ navigation, route }) {
   return (
     <View style={styles.container}>
       <Animated.Image
-        source={{ uri: capturedImage.uri }}
+        source={{ uri: previewUri }}
         style={[styles.preview, { transform: [{ translateY: previewSlide }] }]}
+        resizeMode="contain"
       />
 
       {/* Info bar */}
@@ -1128,7 +1113,11 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   center: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', padding: spacing.xl },
   camera: { flex: 1 },
-  preview: { flex: 1, resizeMode: 'contain' },
+  preview: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
 
   // Top info bar - glassmorphism style
   topBar: {
@@ -1227,7 +1216,7 @@ const styles = StyleSheet.create({
   // Camera angle display
   angleBar: {
     position: 'absolute',
-    top: 170,
+    top: 180,
     left: spacing.md,
     right: spacing.md,
     flexDirection: 'row',
@@ -1479,7 +1468,7 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    minHeight: 220, // Space for top info bars
+    minHeight: 238, // Space above square
   },
   captureBoxMiddle: {
     flexDirection: 'row',
@@ -1494,7 +1483,7 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    minHeight: 280, // Space for bottom controls
+    minHeight: 272, // Space for bottom controls
   },
   captureBox: {
     // Fixed square size - 280px works well on most devices

@@ -8,10 +8,11 @@ import {
   Alert,
   ActivityIndicator,
   Animated,
-  Platform,
+  AppState,
+  Linking,
 } from 'react-native';
+import { Camera, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
-import { useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import * as Haptics from 'expo-haptics';
 import { fonts, fontSizes, colors } from '../constants/theme';
@@ -20,13 +21,7 @@ import AnimatedButton from '../components/AnimatedButton';
 import {
   savePermissionStatus,
   markOnboardingComplete,
-  requestStoragePermission,
-  checkStoragePermission,
-  createExternalStorageDirectory,
-  requestFileManagerAccess,
-  checkFileManagerAccess,
 } from '../services/permissionService';
-import { setExternalStorageLocation } from '../services/storageService';
 
 const PERMISSIONS = [
   {
@@ -43,22 +38,13 @@ const PERMISSIONS = [
     iconName: 'location-outline',
     iconColor: colors.warning,
   },
-  {
-    id: 'storage',
-    title: 'File Manager Access',
-    description: 'Save images and data to device storage',
-    iconName: 'folder-outline',
-    iconColor: colors.primary,
-  },
 ];
 
 export default function PermissionOnboarding({ onComplete }) {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  // Storage permission is needed on Android for external storage access
   const [permissions, setPermissions] = useState({
     camera: false,
     location: false,
-    storage: Platform.OS !== 'android', // Only Android needs storage permission
   });
   const [isLoading, setIsLoading] = useState(false);
 
@@ -81,6 +67,16 @@ export default function PermissionOnboarding({ onComplete }) {
       }));
     }
   }, [cameraPermission]);
+
+  // When app returns from Settings, re-check permissions (camera, location)
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        checkExistingPermissions();
+      }
+    });
+    return () => sub?.remove();
+  }, []);
 
   const startEntranceAnimations = () => {
     // Header animation
@@ -110,22 +106,13 @@ export default function PermissionOnboarding({ onComplete }) {
 
   const checkExistingPermissions = async () => {
     try {
+      const cameraStatus = await Camera.getCameraPermissionsAsync();
       const locationStatus = await Location.getForegroundPermissionsAsync();
-      
-      // Check storage permission on Android
-      let storageGranted = true;
-      if (Platform.OS === 'android') {
-        const storageStatus = await checkStoragePermission();
-        const fileManagerStatus = await checkFileManagerAccess();
-        // Consider granted if either standard storage or file manager access is granted
-        storageGranted = storageStatus.granted || fileManagerStatus.granted;
-      }
-      
+
       setPermissions(prev => ({
         ...prev,
-        camera: cameraPermission?.granted || false,
-        location: locationStatus.status === 'granted',
-        storage: storageGranted,
+        camera: cameraStatus?.granted ?? false,
+        location: locationStatus?.status === 'granted',
       }));
     } catch (error) {
       console.log('Error checking permissions:', error);
@@ -156,42 +143,9 @@ export default function PermissionOnboarding({ onComplete }) {
         console.warn('[PermissionOnboarding] Location permission permanently denied');
       }
 
-      // Request storage and file manager access on Android
-      let storageGranted = true;
-      if (Platform.OS === 'android') {
-        console.log('[PermissionOnboarding] Requesting storage and file manager access...');
-        
-        // For Android 11+, request file manager access first
-        if (Platform.Version >= 30) {
-          const fileManagerResult = await requestFileManagerAccess();
-          console.log('[PermissionOnboarding] File manager access requested (user needs to enable in Settings)');
-        }
-        
-        // Request standard storage permissions
-        const storageResult = await requestStoragePermission();
-        storageGranted = storageResult.granted;
-        console.log('[PermissionOnboarding] Storage permission result:', storageGranted);
-        
-        if (storageGranted) {
-          // Create the external storage directory
-          console.log('[PermissionOnboarding] Creating external storage directory...');
-          const dirResult = await createExternalStorageDirectory();
-          if (dirResult.success) {
-            console.log('[PermissionOnboarding] ✓ External storage directory created:', dirResult.path);
-            // Configure the storage service to use this path
-            await setExternalStorageLocation(dirResult.path);
-          } else {
-            console.warn('[PermissionOnboarding] Failed to create external directory:', dirResult.error);
-          }
-        } else if (!storageResult.canAskAgain) {
-          console.warn('[PermissionOnboarding] Storage permission permanently denied');
-        }
-      }
-
       const newPermissions = {
         camera: cameraGranted,
         location: locationGranted,
-        storage: storageGranted,
       };
       console.log('[PermissionOnboarding] Final permissions:', JSON.stringify(newPermissions));
 
@@ -201,7 +155,6 @@ export default function PermissionOnboarding({ onComplete }) {
       console.log('[PermissionOnboarding] Saving permission statuses...');
       await savePermissionStatus('camera', cameraGranted);
       await savePermissionStatus('location', locationGranted);
-      await savePermissionStatus('storage', storageGranted);
       await savePermissionStatus('permissions_summary', {
         ...newPermissions,
         completedAt: new Date().toISOString(),
@@ -213,14 +166,16 @@ export default function PermissionOnboarding({ onComplete }) {
       const deniedPerms = [];
       if (!cameraGranted) deniedPerms.push('Camera');
       if (!locationGranted) deniedPerms.push('Location');
-      if (!storageGranted && Platform.OS === 'android') deniedPerms.push('File Manager Access');
 
       if (deniedPerms.length > 0) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         Alert.alert(
           'Some Permissions Denied',
-          `${deniedPerms.join(' and ')} permission was denied. Some features may be limited. You can enable permissions later in device settings.`,
-          [{ text: 'Continue', onPress: () => onComplete && onComplete(newPermissions) }]
+          `${deniedPerms.join(' and ')} was not enabled. You can enable them in device settings. When you return, we'll re-check and update the checkmarks.`,
+          [
+            { text: 'Continue Anyway', onPress: () => onComplete && onComplete(newPermissions) },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          ]
         );
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -240,7 +195,7 @@ export default function PermissionOnboarding({ onComplete }) {
   const skipPermissions = async () => {
     Alert.alert(
       'Skip Permissions?',
-      'Camera, location, and file manager access features will not work without permissions. You can enable them later in settings.',
+      'Camera and location features will not work without permissions. You can enable them later in settings.',
       [
         { text: 'Go Back', style: 'cancel' },
         {
@@ -251,7 +206,6 @@ export default function PermissionOnboarding({ onComplete }) {
             await savePermissionStatus('permissions_summary', {
               camera: false,
               location: false,
-              storage: Platform.OS !== 'android', // Only Android needs storage permission
               skipped: true,
               completedAt: new Date().toISOString(),
             });
@@ -272,7 +226,14 @@ export default function PermissionOnboarding({ onComplete }) {
         setPermissions(prev => ({ ...prev, camera: granted }));
         await savePermissionStatus('camera', granted);
         if (!granted) {
-          Alert.alert('Permission Denied', 'Camera permission was denied. You can enable it in device settings.');
+          Alert.alert(
+            'Camera Permission Denied',
+            'You can enable it in device settings. When you return, we\'ll re-check and update.',
+            [
+              { text: 'OK', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            ]
+          );
         }
       } else if (permId === 'location') {
         const result = await Location.requestForegroundPermissionsAsync();
@@ -280,30 +241,14 @@ export default function PermissionOnboarding({ onComplete }) {
         setPermissions(prev => ({ ...prev, location: granted }));
         await savePermissionStatus('location', granted);
         if (!granted) {
-          Alert.alert('Permission Denied', 'Location permission was denied. You can enable it in device settings.');
-        }
-      } else if (permId === 'storage') {
-        if (Platform.OS === 'android') {
-          // For Android 11+, request file manager access first
-          if (Platform.Version >= 30) {
-            await requestFileManagerAccess();
-          }
-          
-          const result = await requestStoragePermission();
-          const granted = result.granted;
-          setPermissions(prev => ({ ...prev, storage: granted }));
-          await savePermissionStatus('storage', granted);
-          
-          if (granted) {
-            // Create the external storage directory
-            const dirResult = await createExternalStorageDirectory();
-            if (dirResult.success) {
-              console.log('[PermissionOnboarding] ✓ External storage directory created:', dirResult.path);
-              await setExternalStorageLocation(dirResult.path);
-            }
-          } else {
-            Alert.alert('Permission Denied', 'File manager access was denied. Images will be saved to internal storage only. You can enable it in device settings.');
-          }
+          Alert.alert(
+            'Location Permission Denied',
+            'You can enable it in device settings. When you return, we\'ll re-check and update.',
+            [
+              { text: 'OK', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            ]
+          );
         }
       }
     } catch (error) {
@@ -312,8 +257,8 @@ export default function PermissionOnboarding({ onComplete }) {
     }
   };
 
-  // Check if all permissions are granted (storage only required on Android)
-  const allGranted = permissions.camera && permissions.location && permissions.storage;
+  // Check if all permissions are granted
+  const allGranted = permissions.camera && permissions.location;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -338,7 +283,7 @@ export default function PermissionOnboarding({ onComplete }) {
 
       {/* Permission List */}
       <View style={styles.permissionList}>
-        {PERMISSIONS.filter((p) => p.id !== 'storage' || Platform.OS === 'android').map((perm, index) => {
+        {PERMISSIONS.map((perm, index) => {
           const isGranted = permissions[perm.id];
           const animIndex = PERMISSIONS.findIndex((p) => p.id === perm.id);
           return (
