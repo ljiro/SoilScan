@@ -125,11 +125,15 @@ const SAFPermissionScreen = ({ onComplete }) => {
     );
   };
 
-  // iOS doesn't need SAF
-  if (Platform.OS !== 'android') {
-    useEffect(() => {
+  // iOS doesn't need SAF - auto-complete for non-Android platforms
+  useEffect(() => {
+    if (Platform.OS !== 'android') {
       onComplete(true);
-    }, []);
+    }
+  }, [onComplete]);
+
+  // Render nothing on non-Android platforms
+  if (Platform.OS !== 'android') {
     return null;
   }
 

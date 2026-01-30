@@ -2,7 +2,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getAppRootDir, ensureDir } from './storageService';
-import { isSAFInitialized, saveCSVToPublicStorage, readCSVFromPublicStorage } from './publicStorageService';
+import { isSAFInitialized, saveMunicipalityCSVToPublicStorage, readCSVFromPublicStorage } from './publicStorageService';
 
 const BACKUP_KEY_PREFIX = '@agricapture_backup_';
 
@@ -295,17 +295,124 @@ export const resetCSV = async () => {
 };
 
 /**
- * Get record count from CSV
- * @returns {Promise<number>} Number of data rows (excluding header)
+ * Get total record count (fast, without full parsing)
+ * Counts lines in CSV excluding header and empty lines.
+ * @returns {Promise<number>} Total number of data records (excluding header)
  */
 export const getRecordCount = async () => {
   try {
-    const content = await readCSV();
-    const rows = parseCSVContent(content);
-    return Math.max(0, rows.length - 1); // Subtract 1 for header row
+    const csvPath = await getCSVFilePathAsync();
+    const fileInfo = await FileSystem.getInfoAsync(csvPath);
+    if (!fileInfo.exists) {
+      console.log('[CSVService] CSV file does not exist, returning count 0');
+      return 0;
+    }
+
+    const content = await FileSystem.readAsStringAsync(csvPath);
+    if (!content || content.trim().length === 0) {
+      return 0;
+    }
+
+    // Fast line counting: split by newlines and count non-empty lines
+    // Normalize line endings first
+    const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = normalized.split('\n').filter(line => line.trim().length > 0);
+
+    // Subtract 1 for header row
+    const count = Math.max(0, lines.length - 1);
+    console.log('[CSVService] Fast record count:', count);
+    return count;
   } catch (error) {
     console.error('[CSVService] Error getting record count:', error.message);
     return 0;
+  }
+};
+
+/**
+ * Get paginated records from CSV
+ * @param {number} page - Zero-indexed page number
+ * @param {number} pageSize - Number of records per page (default 50)
+ * @returns {Promise<{records: Array, page: number, pageSize: number, totalRecords: number, totalPages: number, hasNextPage: boolean, hasPrevPage: boolean}>}
+ */
+export const getRecordsPaginated = async (page = 0, pageSize = 50) => {
+  const emptyResult = {
+    records: [],
+    page: 0,
+    pageSize,
+    totalRecords: 0,
+    totalPages: 0,
+    hasNextPage: false,
+    hasPrevPage: false,
+  };
+
+  try {
+    // Validate inputs
+    if (page < 0) page = 0;
+    if (pageSize < 1) pageSize = 50;
+
+    const csvPath = await getCSVFilePathAsync();
+    const fileInfo = await FileSystem.getInfoAsync(csvPath);
+    if (!fileInfo.exists) {
+      console.log('[CSVService] CSV file does not exist for pagination');
+      return emptyResult;
+    }
+
+    const content = await FileSystem.readAsStringAsync(csvPath);
+    if (!content || content.trim().length === 0) {
+      return emptyResult;
+    }
+
+    // Parse CSV content properly (handles quoted fields with newlines)
+    const rows = parseCSVContent(content);
+
+    if (rows.length === 0) {
+      return emptyResult;
+    }
+
+    // First row is header
+    const headers = rows[0].map(h => h.trim());
+    const totalRecords = Math.max(0, rows.length - 1);
+    const totalPages = Math.ceil(totalRecords / pageSize);
+
+    // Handle page beyond total pages
+    if (page >= totalPages && totalPages > 0) {
+      page = totalPages - 1;
+    }
+
+    // Calculate start and end indices (1-based to skip header)
+    const startIndex = page * pageSize + 1; // +1 to skip header row
+    const endIndex = Math.min(startIndex + pageSize, rows.length);
+
+    // Extract records for this page
+    const records = [];
+    for (let i = startIndex; i < endIndex; i++) {
+      const row = rows[i];
+      const record = {
+        _rowIndex: i, // 1-based line number in parsed rows (header is index 0)
+      };
+
+      headers.forEach((header, colIndex) => {
+        record[header] = row[colIndex] !== undefined ? row[colIndex] : '';
+      });
+
+      records.push(record);
+    }
+
+    const result = {
+      records,
+      page,
+      pageSize,
+      totalRecords,
+      totalPages,
+      hasNextPage: page < totalPages - 1,
+      hasPrevPage: page > 0,
+    };
+
+    console.log(`[CSVService] Paginated: page ${page + 1}/${totalPages}, records ${records.length}/${totalRecords}`);
+    return result;
+  } catch (error) {
+    console.error('[CSVService] Error getting paginated records:', error.message);
+    return emptyResult;
   }
 };
 
@@ -943,7 +1050,7 @@ export const appendToMunicipalityCSV = async (data, municipality) => {
         }
 
         // Save to public storage
-        const safResult = await saveCSVToPublicStorage(municipality, csvContent);
+        const safResult = await saveMunicipalityCSVToPublicStorage(municipality, csvContent);
         result.safSuccess = safResult.success;
 
         if (safResult.success) {

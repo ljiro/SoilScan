@@ -313,8 +313,8 @@ export const saveImageToPublicStorage = async (sourceUri, filename, municipality
     const fileNameWithoutExt = filename.replace(/\.(jpg|jpeg)$/i, '');
     const fileUri = await SAF.createFileAsync(currentUri, fileNameWithoutExt, 'image/jpeg');
 
-    // Write image data
-    await FileSystem.writeAsStringAsync(fileUri, imageBase64, {
+    // Write image data using SAF API
+    await SAF.writeAsStringAsync(fileUri, imageBase64, {
       encoding: FileSystem.EncodingType.Base64,
     });
 
@@ -336,14 +336,56 @@ export const saveImageToPublicStorage = async (sourceUri, filename, municipality
 };
 
 /**
- * Save CSV to public SAF storage
+ * Save CSV to public SAF storage (exports folder)
+ * Saves to: AgriCapture/exports/[filename]
+ *
+ * @param {string} csvContent - CSV content to save
+ * @param {string} filename - Target filename (without extension)
+ * @returns {Promise<{success: boolean, uri?: string, error?: string}>}
+ */
+export const saveCSVToPublicStorage = async (csvContent, filename) => {
+  console.log('[PublicStorage] Saving CSV to exports folder:', filename);
+
+  const agricaptureUri = await getAgriCaptureFolderUri();
+  if (!agricaptureUri) {
+    return { success: false, error: 'SAF not initialized' };
+  }
+
+  try {
+    // Find exports folder
+    const agricaptureContents = await SAF.readDirectoryAsync(agricaptureUri);
+    let exportsUri = agricaptureContents.find(uri =>
+      decodeURIComponent(uri).toLowerCase().includes('exports')
+    );
+
+    if (!exportsUri) {
+      exportsUri = await SAF.makeDirectoryAsync(agricaptureUri, 'exports');
+    }
+
+    // Remove .csv extension if present (SAF adds it based on mime type)
+    const fileNameWithoutExt = filename.replace(/\.csv$/i, '');
+
+    // Create new file
+    const csvUri = await SAF.createFileAsync(exportsUri, fileNameWithoutExt, 'text/csv');
+    await SAF.writeAsStringAsync(csvUri, csvContent);
+
+    console.log('[PublicStorage] CSV saved:', csvUri);
+    return { success: true, uri: csvUri };
+  } catch (error) {
+    console.error('[PublicStorage] Error saving CSV:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+/**
+ * Save CSV to public SAF storage for a specific municipality
  * Saves to: AgriCapture/municipalities/[Municipality]/agricapture_data.csv
  *
  * @param {string} municipality - Municipality name
  * @param {string} csvContent - CSV content to save
  * @returns {Promise<{success: boolean, uri?: string, error?: string}>}
  */
-export const saveCSVToPublicStorage = async (municipality, csvContent) => {
+export const saveMunicipalityCSVToPublicStorage = async (municipality, csvContent) => {
   console.log('[PublicStorage] Saving CSV for municipality:', municipality);
 
   const municipalityResult = await getMunicipalityFolder(municipality);
@@ -362,11 +404,11 @@ export const saveCSVToPublicStorage = async (municipality, csvContent) => {
 
     if (csvUri) {
       // Overwrite existing
-      await FileSystem.writeAsStringAsync(csvUri, csvContent);
+      await SAF.writeAsStringAsync(csvUri, csvContent);
     } else {
       // Create new file
       csvUri = await SAF.createFileAsync(municipalityUri, 'agricapture_data', 'text/csv');
-      await FileSystem.writeAsStringAsync(csvUri, csvContent);
+      await SAF.writeAsStringAsync(csvUri, csvContent);
     }
 
     console.log('[PublicStorage] CSV saved:', csvUri);
@@ -475,6 +517,14 @@ export const resetSAF = async () => {
     console.error('[PublicStorage] Error resetting SAF:', error);
     return { success: false, error: error.message };
   }
+};
+
+/**
+ * Clear SAF permission - Remove SAF configuration
+ * Alias for resetSAF for API consistency
+ */
+export const clearSAFPermission = async () => {
+  return resetSAF();
 };
 
 /**

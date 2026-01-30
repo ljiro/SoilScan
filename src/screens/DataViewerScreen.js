@@ -16,7 +16,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 // Use legacy API - supported until SDK 55
 import * as FileSystem from 'expo-file-system/legacy';
-import { readCSV, getCSVPath, parseCSVContent, resetCSV } from '../services/csvService';
+import { readCSV, getCSVPath, parseCSVContent, resetCSV, getRecordsPaginated, getRecordCount } from '../services/csvService';
 import { Alert } from 'react-native';
 import { fonts, fontSizes, colors, radius, spacing, shadows, layout } from '../constants/theme';
 
@@ -78,6 +78,19 @@ export default function DataViewerScreen({ navigation }) {
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Pagination state
+  const [paginationState, setPaginationState] = useState({
+    records: [],
+    currentPage: 0,
+    totalPages: 0,
+    totalRecords: 0,
+    pageSize: 50,
+    isLoading: false,
+    hasNextPage: false,
+    hasPrevPage: false
+  });
+  const [usePagination, setUsePagination] = useState(true);
+
   // Animation values
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentSlide = useRef(new Animated.Value(20)).current;
@@ -112,11 +125,96 @@ export default function DataViewerScreen({ navigation }) {
     filterAndSortData();
   }, [data, searchQuery, sortColumn, sortDirection]);
 
-  const loadData = async () => {
+  // Switch from pagination to full load when filters become active
+  useEffect(() => {
+    const hasActiveFilters = searchQuery.trim() || sortColumn;
+    if (hasActiveFilters && usePagination && !isLoading) {
+      // Need to load all data for filtering
+      loadData(true);
+    } else if (!hasActiveFilters && !usePagination && data.length > 0 && !isLoading) {
+      // Filters cleared, switch back to pagination
+      loadData(false);
+    }
+  }, [searchQuery, sortColumn]);
+
+  const loadData = async (forceLoadAll = false) => {
+    // Determine if we should use pagination
+    // Use pagination when no filters/search/sort are active
+    const hasActiveFilters = searchQuery.trim() || sortColumn;
+    const shouldUsePagination = !forceLoadAll && !hasActiveFilters;
+
+    if (shouldUsePagination) {
+      // Use paginated loading
+      try {
+        setIsLoading(true);
+        setError(null);
+        logDebug('Loading data with pagination...');
+
+        // First, get headers from a minimal read
+        const csvContent = await readCSV();
+        const parsedRows = parseCSVContent(csvContent);
+
+        if (parsedRows.length === 0) {
+          logDebug('No data found in CSV');
+          setHeaders([]);
+          setData([]);
+          setFilteredData([]);
+          setPaginationState(prev => ({ ...prev, records: [], totalRecords: 0, totalPages: 0 }));
+          setStats({ total: 0, filtered: 0 });
+          setUsePagination(true);
+          setIsLoading(false);
+          return;
+        }
+
+        const headerRow = parsedRows[0].map(h => h.trim());
+        setHeaders(headerRow);
+
+        // Load first page
+        const result = await getRecordsPaginated(0, paginationState.pageSize);
+        setPaginationState({
+          records: result.records,
+          currentPage: result.page,
+          totalPages: result.totalPages,
+          totalRecords: result.totalRecords,
+          pageSize: result.pageSize,
+          isLoading: false,
+          hasNextPage: result.hasNextPage,
+          hasPrevPage: result.hasPrevPage
+        });
+        setUsePagination(true);
+        setStats({ total: result.totalRecords, filtered: result.records.length });
+
+        // Get file modification time
+        const csvPath = getCSVPath();
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(csvPath);
+          if (fileInfo.exists && fileInfo.modificationTime) {
+            setLastUpdated(new Date(fileInfo.modificationTime * 1000));
+          } else if (fileInfo.exists) {
+            setLastUpdated(new Date());
+          }
+        } catch (fileErr) {
+          logDebug('Error getting file info:', fileErr.message);
+          setLastUpdated(new Date());
+        }
+      } catch (err) {
+        console.error('[DataViewerScreen] Error loading paginated data:', err);
+        setError(`Failed to load data: ${err.message}`);
+        setHeaders([]);
+        setPaginationState(prev => ({ ...prev, records: [], totalRecords: 0, totalPages: 0 }));
+        setStats({ total: 0, filtered: 0 });
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    // Load all data for filtering/sorting
     try {
       setIsLoading(true);
       setError(null);
-      logDebug('Starting to load CSV data...');
+      setUsePagination(false);
+      logDebug('Starting to load all CSV data for filtering...');
 
       const csvContent = await readCSV();
       logDebug('CSV content length:', csvContent.length);
@@ -202,6 +300,28 @@ export default function DataViewerScreen({ navigation }) {
       setStats({ total: 0, filtered: 0 });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const loadPage = async (pageNum) => {
+    setPaginationState(prev => ({ ...prev, isLoading: true }));
+    try {
+      const result = await getRecordsPaginated(pageNum, paginationState.pageSize);
+      setPaginationState({
+        records: result.records,
+        currentPage: result.page,
+        totalPages: result.totalPages,
+        totalRecords: result.totalRecords,
+        pageSize: result.pageSize,
+        isLoading: false,
+        hasNextPage: result.hasNextPage,
+        hasPrevPage: result.hasPrevPage
+      });
+      // Update stats to reflect pagination
+      setStats(prev => ({ ...prev, total: result.totalRecords, filtered: result.records.length }));
+    } catch (error) {
+      console.error('[DataViewerScreen] Load page error:', error);
+      setPaginationState(prev => ({ ...prev, isLoading: false }));
     }
   };
 
@@ -360,11 +480,19 @@ export default function DataViewerScreen({ navigation }) {
       return renderErrorState();
     }
 
-    if (headers.length === 0 || data.length === 0) {
+    // Check for empty state - consider both pagination and non-pagination modes
+    const hasData = usePagination
+      ? (headers.length > 0 && paginationState.totalRecords > 0)
+      : (headers.length > 0 && data.length > 0);
+
+    if (!hasData) {
       return renderEmptyState();
     }
 
-    if (filteredData.length === 0 && searchQuery.trim()) {
+    // Get the display data based on mode
+    const displayData = usePagination ? paginationState.records : filteredData;
+
+    if (displayData.length === 0 && searchQuery.trim()) {
       return renderNoResults();
     }
 
@@ -411,7 +539,7 @@ export default function DataViewerScreen({ navigation }) {
 
             {/* Data Rows - Virtualized vertical list for hundreds of records */}
             <FlatList
-              data={filteredData}
+              data={displayData}
               keyExtractor={(item) => String(item._rowIndex)}
               style={styles.dataScrollView}
               contentContainerStyle={styles.dataScrollContent}
@@ -454,6 +582,45 @@ export default function DataViewerScreen({ navigation }) {
             />
           </View>
         </ScrollView>
+
+        {/* Pagination Controls */}
+        {usePagination && paginationState.totalPages > 1 && (
+          <View style={styles.paginationContainer}>
+            <TouchableOpacity
+              onPress={() => loadPage(paginationState.currentPage - 1)}
+              disabled={!paginationState.hasPrevPage || paginationState.isLoading}
+              style={[styles.pageButton, (!paginationState.hasPrevPage || paginationState.isLoading) && styles.pageButtonDisabled]}
+            >
+              <Ionicons name="chevron-back" size={20} color={paginationState.hasPrevPage ? colors.primary : colors.text.tertiary} />
+              <Text style={styles.pageButtonText}>Prev</Text>
+            </TouchableOpacity>
+
+            <View style={styles.pageInfo}>
+              <Text style={styles.pageInfoText}>
+                Page {paginationState.currentPage + 1} of {paginationState.totalPages}
+              </Text>
+              <Text style={styles.pageInfoSubtext}>
+                {paginationState.totalRecords} total records
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              onPress={() => loadPage(paginationState.currentPage + 1)}
+              disabled={!paginationState.hasNextPage || paginationState.isLoading}
+              style={[styles.pageButton, (!paginationState.hasNextPage || paginationState.isLoading) && styles.pageButtonDisabled]}
+            >
+              <Text style={styles.pageButtonText}>Next</Text>
+              <Ionicons name="chevron-forward" size={20} color={paginationState.hasNextPage ? colors.primary : colors.text.tertiary} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Loading indicator for page changes */}
+        {paginationState.isLoading && (
+          <View style={styles.pageLoadingOverlay}>
+            <ActivityIndicator size="small" color={colors.primary} />
+          </View>
+        )}
       </View>
     );
   };
@@ -816,5 +983,57 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     color: colors.text.secondary,
     marginTop: spacing.md,
+  },
+  // Pagination styles
+  paginationContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.background.primary,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  pageButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.background.secondary,
+    gap: spacing.xs,
+  },
+  pageButtonDisabled: {
+    opacity: 0.5,
+  },
+  pageButtonText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSizes.sm,
+    color: colors.primary,
+  },
+  pageInfo: {
+    alignItems: 'center',
+  },
+  pageInfoText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSizes.sm,
+    color: colors.text.primary,
+  },
+  pageInfoSubtext: {
+    fontFamily: fonts.regular,
+    fontSize: fontSizes.xs,
+    color: colors.text.tertiary,
+    marginTop: 2,
+  },
+  pageLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255,255,255,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

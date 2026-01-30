@@ -32,7 +32,7 @@ const SAVE_STATUS = {
   UNSAVED: 'unsaved',
 };
 
-export default function SetupScreen() {
+export default function SetupScreen({ navigation }) {
   const [deviceId, setDeviceId] = useState('');
   const [selectedMunicipality, setSelectedMunicipality] = useState(null);
   const [selectedBarangay, setSelectedBarangay] = useState(null);
@@ -87,13 +87,21 @@ export default function SetupScreen() {
       }),
     ]).start();
 
+    // Reload storage info when screen comes into focus
+    const unsubscribe = navigation?.addListener('focus', () => {
+      loadStorageInfo();
+    });
+
     return () => {
       isMounted.current = false;
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
+      if (unsubscribe) {
+        unsubscribe();
+      }
     };
-  }, []);
+  }, [navigation]);
 
   // Detect changes and update save status
   useEffect(() => {
