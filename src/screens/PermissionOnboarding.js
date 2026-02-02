@@ -10,6 +10,7 @@ import {
   Animated,
   AppState,
   Linking,
+  Platform,
 } from 'react-native';
 import { Camera, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,7 +22,16 @@ import AnimatedButton from '../components/AnimatedButton';
 import {
   savePermissionStatus,
   markOnboardingComplete,
+  createExternalStorageDirectoryWithRetry,
+  requestFileManagerAccess,
+  checkFileManagerAccess,
+  checkSafStorageAccess,
+  requestSafFolderAccess,
+  createSafAppFolderAndReturnPath,
+  recordFileManagerSettingsOpened,
+  isSafAvailable,
 } from '../services/permissionService';
+import { setExternalStorageLocation, initStorage } from '../services/storageService';
 
 const PERMISSIONS = [
   {
@@ -38,6 +48,14 @@ const PERMISSIONS = [
     iconName: 'location-outline',
     iconColor: colors.warning,
   },
+  {
+    id: 'storage',
+    title: 'Choose storage folder',
+    description: 'Pick a folder to store images and data (e.g. Documents)',
+    iconName: 'folder-outline',
+    iconColor: colors.primary,
+    androidOnly: true,
+  },
 ];
 
 export default function PermissionOnboarding({ onComplete }) {
@@ -45,6 +63,7 @@ export default function PermissionOnboarding({ onComplete }) {
   const [permissions, setPermissions] = useState({
     camera: false,
     location: false,
+    storage: Platform.OS !== 'android',
   });
   const [isLoading, setIsLoading] = useState(false);
 
@@ -58,24 +77,30 @@ export default function PermissionOnboarding({ onComplete }) {
     startEntranceAnimations();
   }, []);
 
-  // Update camera permission state when it changes
-  useEffect(() => {
-    if (cameraPermission) {
-      setPermissions(prev => ({
-        ...prev,
-        camera: cameraPermission.granted,
-      }));
-    }
-  }, [cameraPermission]);
-
-  // When app returns from Settings, re-check permissions (camera, location)
+  const appStateTimeoutsRef = useRef([]);
+  // When app returns from Settings, re-check all permissions. On Android run multiple times
+  // (800ms, 2.2s, 4.5s) so we catch when the system has applied "all files".
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
-        checkExistingPermissions();
+        appStateTimeoutsRef.current.forEach((id) => clearTimeout(id));
+        appStateTimeoutsRef.current = [];
+        if (Platform.OS === 'android') {
+          checkExistingPermissions();
+          [500, 1500, 3500, 7000].forEach((ms) => {
+            const id = setTimeout(() => checkExistingPermissions(), ms);
+            appStateTimeoutsRef.current.push(id);
+          });
+        } else {
+          checkExistingPermissions();
+        }
       }
     });
-    return () => sub?.remove();
+    return () => {
+      appStateTimeoutsRef.current.forEach((id) => clearTimeout(id));
+      appStateTimeoutsRef.current = [];
+      sub?.remove();
+    };
   }, []);
 
   const startEntranceAnimations = () => {
@@ -105,18 +130,60 @@ export default function PermissionOnboarding({ onComplete }) {
   };
 
   const checkExistingPermissions = async () => {
-    try {
-      const cameraStatus = await Camera.getCameraPermissionsAsync();
-      const locationStatus = await Location.getForegroundPermissionsAsync();
+    let cameraGranted = false;
+    let locationGranted = false;
+    let storageGranted = Platform.OS !== 'android';
 
-      setPermissions(prev => ({
-        ...prev,
-        camera: cameraStatus?.granted ?? false,
-        location: locationStatus?.status === 'granted',
-      }));
-    } catch (error) {
-      console.log('Error checking permissions:', error);
+    try {
+      const [cameraStatus, locationStatus] = await Promise.all([
+        Camera.getCameraPermissionsAsync(),
+        Location.getForegroundPermissionsAsync(),
+      ]);
+      cameraGranted = cameraStatus?.granted ?? false;
+      locationGranted = locationStatus?.status === 'granted';
+    } catch (e) {
+      console.log('Error checking camera/location:', e);
     }
+
+    if (Platform.OS === 'android') {
+      try {
+        const saf = await checkSafStorageAccess();
+        if (saf.granted && saf.path) {
+          await setExternalStorageLocation(saf.path);
+          await savePermissionStatus('storage', true);
+          storageGranted = true;
+        } else {
+          const fileManager = await checkFileManagerAccess();
+          storageGranted = fileManager.granted;
+          if (fileManager.granted) {
+            const pathToUse = fileManager.path ? fileManager.path.replace(/\/$/, '') : null;
+            const created = pathToUse
+              ? await createExternalStorageDirectoryWithRetry(pathToUse)
+              : await createExternalStorageDirectoryWithRetry();
+            const path = (created.success && created.path) ? created.path : pathToUse;
+            if (path) {
+              await setExternalStorageLocation(path);
+              await savePermissionStatus('storage', true);
+            }
+          } else {
+            await setExternalStorageLocation(null);
+            await savePermissionStatus('storage', false);
+          }
+        }
+      } catch (e) {
+        console.log('Error checking/creating external storage:', e);
+        storageGranted = false;
+        await setExternalStorageLocation(null);
+        await savePermissionStatus('storage', false);
+      }
+    }
+
+    setPermissions(prev => ({
+      ...prev,
+      camera: cameraGranted,
+      location: locationGranted,
+      storage: storageGranted,
+    }));
   };
 
   const requestAllPermissions = async () => {
@@ -143,29 +210,63 @@ export default function PermissionOnboarding({ onComplete }) {
         console.warn('[PermissionOnboarding] Location permission permanently denied');
       }
 
+      let storageGranted = Platform.OS !== 'android';
+      if (Platform.OS === 'android') {
+        const saf = await checkSafStorageAccess();
+        if (saf.granted) {
+          storageGranted = true;
+        } else if (isSafAvailable()) {
+          const doc = await requestSafFolderAccess();
+          if (doc) {
+            const path = await createSafAppFolderAndReturnPath(doc);
+            if (path) {
+              await setExternalStorageLocation(path);
+              await initStorage();
+              storageGranted = true;
+            }
+          }
+        }
+        if (!storageGranted) {
+          const fileManager = await checkFileManagerAccess();
+          storageGranted = fileManager.granted;
+          if (storageGranted) {
+            const pathToUse = fileManager.path ? fileManager.path.replace(/\/$/, '') : undefined;
+            const created = await createExternalStorageDirectoryWithRetry(pathToUse);
+            if (created.success && created.path) {
+              await setExternalStorageLocation(created.path);
+            } else if (pathToUse) {
+              await setExternalStorageLocation(pathToUse);
+            }
+          }
+        }
+        if (!storageGranted && Platform.Version >= 30) {
+          await requestFileManagerAccess();
+        }
+      }
+
       const newPermissions = {
         camera: cameraGranted,
         location: locationGranted,
+        storage: storageGranted,
       };
       console.log('[PermissionOnboarding] Final permissions:', JSON.stringify(newPermissions));
 
       setPermissions(newPermissions);
 
-      // Save permission statuses
-      console.log('[PermissionOnboarding] Saving permission statuses...');
       await savePermissionStatus('camera', cameraGranted);
       await savePermissionStatus('location', locationGranted);
+      await savePermissionStatus('storage', storageGranted);
       await savePermissionStatus('permissions_summary', {
         ...newPermissions,
         completedAt: new Date().toISOString(),
       });
 
       await markOnboardingComplete();
-      console.log('[PermissionOnboarding] Onboarding marked as complete');
 
       const deniedPerms = [];
       if (!cameraGranted) deniedPerms.push('Camera');
       if (!locationGranted) deniedPerms.push('Location');
+      if (!storageGranted && Platform.OS === 'android') deniedPerms.push('Storage folder');
 
       if (deniedPerms.length > 0) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
@@ -195,7 +296,7 @@ export default function PermissionOnboarding({ onComplete }) {
   const skipPermissions = async () => {
     Alert.alert(
       'Skip Permissions?',
-      'Camera and location features will not work without permissions. You can enable them later in settings.',
+      'Camera, location, and file manager access will not work without permissions. You can enable them later in settings.',
       [
         { text: 'Go Back', style: 'cancel' },
         {
@@ -203,9 +304,14 @@ export default function PermissionOnboarding({ onComplete }) {
           style: 'destructive',
           onPress: async () => {
             await markOnboardingComplete();
+            if (Platform.OS === 'android') {
+              await setExternalStorageLocation(null);
+              await savePermissionStatus('storage', false);
+            }
             await savePermissionStatus('permissions_summary', {
               camera: false,
               location: false,
+              storage: Platform.OS !== 'android',
               skipped: true,
               completedAt: new Date().toISOString(),
             });
@@ -250,6 +356,44 @@ export default function PermissionOnboarding({ onComplete }) {
             ]
           );
         }
+      } else if (permId === 'storage' && Platform.OS === 'android') {
+        if (isSafAvailable()) {
+          const doc = await requestSafFolderAccess();
+          if (doc) {
+            const path = await createSafAppFolderAndReturnPath(doc);
+            if (path) {
+              await setExternalStorageLocation(path);
+              await initStorage();
+              setPermissions(prev => ({ ...prev, storage: true }));
+              await savePermissionStatus('storage', true);
+            }
+          }
+        } else {
+          await recordFileManagerSettingsOpened();
+          if (Platform.Version >= 30) {
+            const fmResult = await requestFileManagerAccess();
+            if (fmResult?.openedSettings) return;
+          }
+          const { requestStoragePermission } = await import('../services/permissionService');
+          await requestStoragePermission();
+          const dirResult = await createExternalStorageDirectoryWithRetry();
+          const granted = dirResult.success;
+          if (granted && dirResult.path) {
+            await setExternalStorageLocation(dirResult.path);
+          }
+          setPermissions(prev => ({ ...prev, storage: granted }));
+          await savePermissionStatus('storage', granted);
+          if (!granted) {
+            Alert.alert(
+              'File Manager Access',
+              'To save images and CSV to an "AgriCapture" folder in device storage, enable "Allow access to manage all files" in Settings, then return to the app.',
+              [
+                { text: 'OK', style: 'cancel' },
+                { text: 'Open Settings', onPress: () => Linking.openSettings() },
+              ]
+            );
+          }
+        }
       }
     } catch (error) {
       console.error('Error requesting permission:', error);
@@ -257,8 +401,10 @@ export default function PermissionOnboarding({ onComplete }) {
     }
   };
 
-  // Check if all permissions are granted
-  const allGranted = permissions.camera && permissions.location;
+  const visiblePermissions = PERMISSIONS.filter(
+    (p) => (!p.androidOnly || Platform.OS === 'android') && (p.id !== 'storage' || isSafAvailable())
+  );
+  const allGranted = visiblePermissions.every((p) => permissions[p.id]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -283,7 +429,7 @@ export default function PermissionOnboarding({ onComplete }) {
 
       {/* Permission List */}
       <View style={styles.permissionList}>
-        {PERMISSIONS.map((perm, index) => {
+        {visiblePermissions.map((perm, index) => {
           const isGranted = permissions[perm.id];
           const animIndex = PERMISSIONS.findIndex((p) => p.id === perm.id);
           return (

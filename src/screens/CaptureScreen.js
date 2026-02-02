@@ -23,7 +23,7 @@ import {
   createLocationData,
   checkPermissions,
 } from '../services/gpsService';
-import { saveImage, loadConfig } from '../services/storageService';
+import { saveImage, loadConfig, getInfoStorage, deleteFileStorage } from '../services/storageService';
 import { appendToCSV, initCSV, getLastSpotNumber, getShotsForSpot, getMaxShotForSpot, getNextAvailableShot, updateCSVRow } from '../services/csvService';
 // Use legacy API - supported until SDK 55
 import * as FileSystem from 'expo-file-system/legacy';
@@ -658,9 +658,9 @@ export default function CaptureScreen({ navigation, route }) {
         if (oldImagePath) {
           console.log('[CaptureScreen] Deleting old image:', oldImagePath);
           try {
-            const fileInfo = await FileSystem.getInfoAsync(oldImagePath);
+            const fileInfo = await getInfoStorage(oldImagePath);
             if (fileInfo.exists) {
-              await FileSystem.deleteAsync(oldImagePath);
+              await deleteFileStorage(oldImagePath);
               console.log('[CaptureScreen] Old image deleted successfully');
             }
           } catch (delErr) {

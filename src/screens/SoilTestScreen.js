@@ -14,9 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Sharing from 'expo-sharing';
-// Use legacy API - supported until SDK 55
-import * as FileSystem from 'expo-file-system/legacy';
-import { loadConfig } from '../services/storageService';
+import { loadConfig, getInfoStorage } from '../services/storageService';
 import {
   initSoilTestCSV,
   saveSoilTestResult,
@@ -512,7 +510,7 @@ export default function SoilTestScreen({ navigation }) {
 
     try {
       const csvPath = getSoilTestPath();
-      const fileInfo = await FileSystem.getInfoAsync(csvPath);
+      const fileInfo = await getInfoStorage(csvPath);
 
       if (!fileInfo.exists) {
         Alert.alert('No Data', 'No soil test results file found.');

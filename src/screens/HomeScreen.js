@@ -22,7 +22,7 @@ try {
   fetch('http://127.0.0.1:7242/ingest/6cdea6d5-66f8-4b81-8d70-27705f4a1cd7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomeScreen.js:15',message:'Import successful',data:{IoniconsType:typeof Ionicons},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
 } catch(e) {}
 // #endregion
-import { initStorage, loadConfig, verifyAndInitializeStorage } from '../services/storageService';
+import { initStorage, loadConfig, verifyAndInitializeStorage, verifyExternalStorageAccess } from '../services/storageService';
 import { initCSV, verifyCSVStorage, getRecordCount } from '../services/csvService';
 import { fonts, fontSizes, colors, radius, shadows, spacing, layout } from '../constants/theme';
 import OnboardingGuide from './OnboardingGuide';
@@ -69,10 +69,9 @@ export default function HomeScreen({ navigation }) {
       if (storageResult && !storageResult.success) {
         console.error('[HomeScreen] Storage initialization had errors:', storageResult.failed);
       }
-      
+      await verifyExternalStorageAccess();
       console.log('[HomeScreen] Initializing CSV...');
       await initCSV();
-      
       await checkSetup();
     } catch (error) {
       console.error('[HomeScreen] Initialization error:', error);

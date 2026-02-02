@@ -27,7 +27,8 @@
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      "./plugins/withAndroidStoragePermissions.js"
     ],
     "ios": {
       "supportsTablet": true,
@@ -43,7 +44,10 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.HIGH_SAMPLING_RATE_SENSORS",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.MANAGE_EXTERNAL_STORAGE"
       ],
       "package": "com.agricapture.app",
       "edgeToEdgeEnabled": true

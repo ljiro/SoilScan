@@ -12,13 +12,11 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-// Use legacy API - supported until SDK 55
-import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as Haptics from 'expo-haptics';
 import JSZip from 'jszip';
 import { getCSVPathAsync, readCSV, parseCSVContent, parseCSVToRecords, getCSVHeaders } from '../services/csvService';
-import { getImagesDir, getImagesDirAsync, getAppRootDirAsync, loadConfig, ensureDir } from '../services/storageService';
+import { getImagesDirAsync, getAppRootDirAsync, loadConfig, ensureDir, getInfoStorage, readFileStorage, writeFileStorage, listDirStorage, deleteFileStorage } from '../services/storageService';
 import { fonts, fontSizes, colors, radius, spacing, shadows, layout } from '../constants/theme';
 import ExportRecordSelector from '../components/ExportRecordSelector';
 import ExportRecordsList from '../components/ExportRecordsList';
@@ -214,14 +212,12 @@ export default function ExportScreen({ navigation }) {
           continue;
         }
         try {
-          const info = await FileSystem.getInfoAsync(path);
+          const info = await getInfoStorage(path);
           if (!info.exists) {
             done++;
             continue;
           }
-          const base64 = await FileSystem.readAsStringAsync(path, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
+          const base64 = await readFileStorage(path, { encoding: 'base64' });
           const baseName = fn.replace(/^.*[/\\]/, '') || `image_${record.uuid || i}.jpg`;
           zip.file(baseName, base64, { base64: true });
         } catch (_) {
@@ -238,9 +234,7 @@ export default function ExportScreen({ navigation }) {
       );
       const fileName = `SoilScan_export_${new Date().toISOString().slice(0, 10)}.zip`;
       const outPath = `${exportsDir}${fileName}`;
-      await FileSystem.writeAsStringAsync(outPath, zipBlob, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      await writeFileStorage(outPath, zipBlob, { encoding: 'base64' });
 
       setZipProgress(null);
       const available = await Sharing.isAvailableAsync();
@@ -299,7 +293,7 @@ export default function ExportScreen({ navigation }) {
 
       let csvSize = 0;
       try {
-        const csvInfo = await FileSystem.getInfoAsync(csvPath);
+        const csvInfo = await getInfoStorage(csvPath);
         csvSize = csvInfo.exists ? (csvInfo.size / 1024).toFixed(1) : 0;
         logDebug('CSV file info:', { exists: csvInfo.exists, size: csvInfo.size });
       } catch (csvErr) {
@@ -315,23 +309,22 @@ export default function ExportScreen({ navigation }) {
 
       try {
         const countImages = async (dir) => {
-          const dirInfo = await FileSystem.getInfoAsync(dir);
+          const dirInfo = await getInfoStorage(dir);
           if (!dirInfo.exists) {
             logDebug('Directory does not exist:', dir);
             return;
           }
 
-          const items = await FileSystem.readDirectoryAsync(dir);
+          const items = await listDirStorage(dir);
           logDebug(`Found ${items.length} items in ${dir}`);
 
           for (const item of items) {
-            const itemPath = `${dir}${item}`;
-            const info = await FileSystem.getInfoAsync(itemPath);
-            if (info.isDirectory) {
-              await countImages(`${itemPath}/`);
-            } else if (item.toLowerCase().endsWith('.jpg') || item.toLowerCase().endsWith('.jpeg')) {
+            const itemPath = item.type === 'directory' ? item.uri + '/' : item.uri;
+            if (item.type === 'directory') {
+              await countImages(itemPath);
+            } else if (item.name.toLowerCase().endsWith('.jpg') || item.name.toLowerCase().endsWith('.jpeg')) {
               imageCount++;
-              totalImagesSize += info.size || 0;
+              totalImagesSize += item.size || 0;
             }
           }
         };
@@ -366,7 +359,7 @@ export default function ExportScreen({ navigation }) {
     setIsExporting(true);
     try {
       const csvPath = await getCSVPathAsync();
-      const fileInfo = await FileSystem.getInfoAsync(csvPath);
+      const fileInfo = await getInfoStorage(csvPath);
 
       if (!fileInfo.exists) {
         Alert.alert('No Data', 'No data to export yet. Capture some photos first.');
@@ -426,10 +419,10 @@ export default function ExportScreen({ navigation }) {
       const imagesDir = await getImagesDirAsync();
 
       // Delete CSV
-      await FileSystem.deleteAsync(csvPath, { idempotent: true });
+      await deleteFileStorage(csvPath);
 
       // Delete images directory
-      await FileSystem.deleteAsync(imagesDir, { idempotent: true });
+      await deleteFileStorage(imagesDir);
 
       // Reload stats
       await loadStats();

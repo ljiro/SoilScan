@@ -1,7 +1,14 @@
 // Use legacy API - supported until SDK 55
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getAppRootDir, ensureDir } from './storageService';
+import {
+  getAppRootDir,
+  ensureDir,
+  getInfoStorage,
+  readFileStorage,
+  writeFileStorage,
+  deleteFileStorage,
+} from './storageService';
 
 const BACKUP_KEY_PREFIX = '@agricapture_backup_';
 
@@ -92,16 +99,16 @@ export const initCSV = async () => {
     console.log('[CSVService] Data directory ready:', dataDir);
 
     const csvPath = await getCSVFilePathAsync();
-    const fileInfo = await FileSystem.getInfoAsync(csvPath);
+    const fileInfo = await getInfoStorage(csvPath);
 
     if (!fileInfo.exists) {
       console.log('[CSVService] Creating new CSV file with headers...');
       await withRetry(async () => {
-        await FileSystem.writeAsStringAsync(csvPath, CSV_HEADERS.join(',') + '\n');
+        await writeFileStorage(csvPath, CSV_HEADERS.join(',') + '\n');
       });
       invalidateCSVCache();
 
-      const verifyInfo = await FileSystem.getInfoAsync(csvPath);
+      const verifyInfo = await getInfoStorage(csvPath);
       if (!verifyInfo.exists) {
         throw new Error('CSV file creation verification failed');
       }
@@ -128,7 +135,7 @@ export const appendToCSV = async (data) => {
 
   try {
     const csvPath = await getCSVFilePathAsync();
-    const csvInfo = await FileSystem.getInfoAsync(csvPath);
+    const csvInfo = await getInfoStorage(csvPath);
     if (!csvInfo.exists) {
       console.log('[CSVService] CSV file not found, initializing...');
       const initResult = await initCSV();
@@ -160,12 +167,12 @@ export const appendToCSV = async (data) => {
         existingContent += '\n';
       }
       const newContent = existingContent + row + '\n';
-      await FileSystem.writeAsStringAsync(csvPath, newContent);
+      await writeFileStorage(csvPath, newContent);
       invalidateCSVCache();
       console.log('[CSVService] CSV written, previous size:', existingContent.length, 'new size:', newContent.length);
     });
 
-    const afterInfo = await FileSystem.getInfoAsync(csvPath);
+    const afterInfo = await getInfoStorage(csvPath);
     console.log('[CSVService] CSV append successful, new size:', afterInfo.size);
     return { success: true };
   } catch (error) {
@@ -185,14 +192,14 @@ export const readCSV = async () => {
     if (csvCache && csvCache.path === csvPath && csvCache.content != null) {
       return csvCache.content;
     }
-    const fileInfo = await FileSystem.getInfoAsync(csvPath);
+    const fileInfo = await getInfoStorage(csvPath);
     if (!fileInfo.exists) {
       console.log('[CSVService] CSV file does not exist, returning headers only');
       const headersOnly = CSV_HEADERS.join(',') + '\n';
       csvCache = { content: headersOnly, parsed: [CSV_HEADERS.slice()], path: csvPath };
       return headersOnly;
     }
-    const content = await FileSystem.readAsStringAsync(csvPath);
+    const content = await readFileStorage(csvPath);
     console.log('[CSVService] Read CSV file, size:', content.length);
     const parsed = parseCSVContent(content);
     csvCache = { content, parsed, path: csvPath };
@@ -241,12 +248,12 @@ export const verifyCSVStorage = async () => {
       return diagnostics;
     }
 
-    const dirInfo = await FileSystem.getInfoAsync(csvDir);
+    const dirInfo = await getInfoStorage(csvDir);
     diagnostics.dirExists = dirInfo.exists;
 
     if (!dirInfo.exists) {
-      await FileSystem.makeDirectoryAsync(csvDir, { intermediates: true });
-      const verifyDir = await FileSystem.getInfoAsync(csvDir);
+      await ensureDir(csvDir);
+      const verifyDir = await getInfoStorage(csvDir);
       diagnostics.dirExists = verifyDir.exists;
       if (!verifyDir.exists) {
         diagnostics.success = false;
@@ -254,7 +261,7 @@ export const verifyCSVStorage = async () => {
       }
     }
 
-    const fileInfo = await FileSystem.getInfoAsync(csvPath);
+    const fileInfo = await getInfoStorage(csvPath);
     diagnostics.fileExists = fileInfo.exists;
     diagnostics.fileSize = fileInfo.size || 0;
 
@@ -262,7 +269,7 @@ export const verifyCSVStorage = async () => {
       const testPath = `${csvDir}.csv_test`;
       await FileSystem.writeAsStringAsync(testPath, 'test');
       const readBack = await FileSystem.readAsStringAsync(testPath);
-      await FileSystem.deleteAsync(testPath, { idempotent: true });
+      await deleteFileStorage(testPath);
       diagnostics.canWrite = readBack === 'test';
       diagnostics.canRead = readBack === 'test';
     } catch (writeError) {
@@ -273,7 +280,7 @@ export const verifyCSVStorage = async () => {
 
     if (diagnostics.fileExists) {
       try {
-        const content = await FileSystem.readAsStringAsync(csvPath);
+        const content = await readFileStorage(csvPath);
         const rows = parseCSVContent(content);
         diagnostics.rowCount = Math.max(0, rows.length - 1);
       } catch (readError) {
@@ -296,13 +303,13 @@ export const resetCSV = async () => {
   console.log('[CSVService] Resetting CSV file...');
   try {
     const csvPath = await getCSVFilePathAsync();
-    const fileInfo = await FileSystem.getInfoAsync(csvPath);
+    const fileInfo = await getInfoStorage(csvPath);
     if (fileInfo.exists) {
       await FileSystem.deleteAsync(csvPath, { idempotent: true });
     }
-    await FileSystem.writeAsStringAsync(csvPath, CSV_HEADERS.join(',') + '\n');
+    await writeFileStorage(csvPath, CSV_HEADERS.join(',') + '\n');
     invalidateCSVCache();
-    const verifyInfo = await FileSystem.getInfoAsync(csvPath);
+    const verifyInfo = await getInfoStorage(csvPath);
     if (!verifyInfo.exists) {
       throw new Error('Failed to create new CSV file');
     }
@@ -340,13 +347,13 @@ export const deleteFromCSV = async (uuid) => {
 
   try {
     const csvPath = await getCSVFilePathAsync();
-    const fileInfo = await FileSystem.getInfoAsync(csvPath);
+    const fileInfo = await getInfoStorage(csvPath);
     if (!fileInfo.exists) {
       console.warn('[CSVService] CSV file does not exist, nothing to delete');
       return null;
     }
 
-    const content = await FileSystem.readAsStringAsync(csvPath);
+    const content = await readFileStorage(csvPath);
     const rows = parseCSVContent(content);
 
     if (rows.length <= 1) {
@@ -383,7 +390,7 @@ export const deleteFromCSV = async (uuid) => {
       });
 
       await withRetry(async () => {
-        await FileSystem.writeAsStringAsync(csvPath, csvLines.join('\n') + '\n');
+        await writeFileStorage(csvPath, csvLines.join('\n') + '\n');
       });
       console.log('[CSVService] Row deleted successfully, remaining rows:', remainingRows.length - 1);
     } else {
@@ -432,12 +439,12 @@ export const getLastSpotNumber = async () => {
 export const getShotsForSpot = async (spotNumber) => {
   try {
     const csvPath = await getCSVFilePathAsync();
-    const fileInfo = await FileSystem.getInfoAsync(csvPath);
+    const fileInfo = await getInfoStorage(csvPath);
     if (!fileInfo.exists) {
       return 0;
     }
 
-    const content = await FileSystem.readAsStringAsync(csvPath);
+    const content = await readFileStorage(csvPath);
     const rows = parseCSVContent(content);
 
     if (rows.length <= 1) return 0;
@@ -563,13 +570,13 @@ export const updateCSVField = async (uuid, fieldName, newValue) => {
 
   try {
     const csvPath = await getCSVFilePathAsync();
-    const fileInfo = await FileSystem.getInfoAsync(csvPath);
+    const fileInfo = await getInfoStorage(csvPath);
     if (!fileInfo.exists) {
       console.warn('[CSVService] CSV file does not exist, cannot update');
       return false;
     }
 
-    const content = await FileSystem.readAsStringAsync(csvPath);
+    const content = await readFileStorage(csvPath);
     const rows = parseCSVContent(content);
 
     if (rows.length <= 1) {
@@ -609,7 +616,7 @@ export const updateCSVField = async (uuid, fieldName, newValue) => {
       });
 
       await withRetry(async () => {
-        await FileSystem.writeAsStringAsync(csvPath, csvLines.join('\n') + '\n');
+        await writeFileStorage(csvPath, csvLines.join('\n') + '\n');
       });
       invalidateCSVCache();
       console.log('[CSVService] Field updated successfully');
@@ -635,13 +642,13 @@ export const updateCSVRow = async (uuid, newData) => {
 
   try {
     const csvPath = await getCSVFilePathAsync();
-    const fileInfo = await FileSystem.getInfoAsync(csvPath);
+    const fileInfo = await getInfoStorage(csvPath);
     if (!fileInfo.exists) {
       console.warn('[CSVService] CSV file does not exist, cannot update');
       return { success: false, error: 'CSV file not found' };
     }
 
-    const content = await FileSystem.readAsStringAsync(csvPath);
+    const content = await readFileStorage(csvPath);
     const rows = parseCSVContent(content);
 
     if (rows.length <= 1) {
@@ -697,7 +704,7 @@ export const updateCSVRow = async (uuid, newData) => {
     });
 
     await withRetry(async () => {
-      await FileSystem.writeAsStringAsync(csvPath, csvLines.join('\n') + '\n');
+      await writeFileStorage(csvPath, csvLines.join('\n') + '\n');
     });
     invalidateCSVCache();
 

@@ -3,6 +3,18 @@ import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
+// Optional SAF (Storage Access Framework) for Android - only in dev/build, not Expo Go
+let safX = null;
+if (Platform.OS === 'android') {
+  try {
+    safX = require('react-native-saf-x');
+  } catch {
+    safX = null;
+  }
+}
+
+const isSafUri = (uri) => Boolean(uri && typeof uri === 'string' && uri.startsWith('content://'));
+
 // Use lazy evaluation for all paths to ensure FileSystem.documentDirectory is available
 // These are evaluated at runtime, not module load time, to avoid null/undefined issues
 
@@ -29,14 +41,22 @@ const getBaseStorageDir = async () => {
   // Start detection
   baseStorageDirPromise = (async () => {
     if (Platform.OS === 'android') {
-      // Check if external storage path is configured
+      // Check if external storage path is configured (file path or SAF content URI)
       const storageConfig = await loadConfig('storage_location');
       if (storageConfig?.externalPath) {
-        // Use external if explicitly configured and still accessible
+        const ext = storageConfig.externalPath;
+        // SAF content URI: use as-is (no FileSystem check)
+        if (isSafUri(ext)) {
+          const path = ext.endsWith('/') ? ext : `${ext}/`;
+          console.log('[StorageService] Using configured SAF storage:', path);
+          baseStorageDirCache = path;
+          return path;
+        }
+        // File path: verify with FileSystem
         try {
-          const info = await FileSystem.getInfoAsync(storageConfig.externalPath);
+          const info = await FileSystem.getInfoAsync(ext);
           if (info.exists && info.isDirectory) {
-            const path = storageConfig.externalPath.endsWith('/') ? storageConfig.externalPath : `${storageConfig.externalPath}/`;
+            const path = ext.endsWith('/') ? ext : `${ext}/`;
             console.log('[StorageService] Using configured external storage:', path);
             baseStorageDirCache = path;
             return path;
@@ -84,6 +104,8 @@ const getAppRootDirAsync = async () => await getBaseStorageDir();
 const getImagesDirAsync = async () => `${await getBaseStorageDir()}images/`;
 const getDataDirAsync = async () => `${await getBaseStorageDir()}data/`;
 const getConfigDirAsync = async () => `${await getBaseStorageDir()}config/`;
+const getCacheDirAsync = async () => `${await getBaseStorageDir()}cache/`;
+const getExportsDirAsync = async () => `${await getBaseStorageDir()}exports/`;
 
 const CONFIG_PREFIX = '@agricapture_config_';
 
@@ -114,20 +136,28 @@ const withRetry = async (operation, maxRetries = 3, delay = 200) => {
 };
 
 /**
- * Ensure directory exists (native only)
- * With retry logic for APK builds
+ * Ensure directory exists (native only). Supports file:// and content:// (SAF) paths.
+ * With retry logic for APK builds.
  */
 const ensureDir = async (dir, retries = 3) => {
   if (isWeb) return true;
-  
+  if (isSafUri(dir) && safX) {
+    try {
+      const uri = dir.endsWith('/') ? dir.slice(0, -1) : dir;
+      const exists = await safX.exists(uri);
+      if (!exists) await safX.mkdir(uri);
+      return true;
+    } catch (error) {
+      console.error('[StorageService] SAF directory error:', dir, error?.message);
+      return false;
+    }
+  }
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const info = await FileSystem.getInfoAsync(dir);
       if (!info.exists) {
         console.log(`[StorageService] Creating directory (attempt ${attempt}/${retries}):`, dir);
         await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-        
-        // Verify it was created
         const verifyInfo = await FileSystem.getInfoAsync(dir);
         if (verifyInfo.exists && verifyInfo.isDirectory) {
           console.log(`[StorageService] ✓ Directory created successfully:`, dir);
@@ -145,11 +175,88 @@ const ensureDir = async (dir, retries = 3) => {
         console.error('[StorageService] ✗ Failed to create directory after', retries, 'attempts:', dir);
         return false;
       }
-      // Wait before retry (exponential backoff)
       await new Promise(resolve => setTimeout(resolve, 200 * attempt));
     }
   }
   return false;
+};
+
+/** Read file at path (file:// or content://). options.encoding: 'utf8' | 'base64'. */
+const readFileStorage = async (path, options = {}) => {
+  const encoding = options.encoding || 'utf8';
+  if (isSafUri(path) && safX) return await safX.readFile(path, { encoding });
+  if (encoding === 'base64') {
+    return await FileSystem.readAsStringAsync(path, { encoding: FileSystem.EncodingType.Base64 });
+  }
+  return await FileSystem.readAsStringAsync(path);
+};
+
+/** Write string to file at path (file:// or content://). */
+const writeFileStorage = async (path, data, options = {}) => {
+  if (isSafUri(path) && safX) {
+    await safX.writeFile(path, data, { encoding: options.encoding || 'utf8' });
+    return;
+  }
+  await FileSystem.writeAsStringAsync(path, data, options);
+};
+
+/** Get file/dir info. Returns { exists, size, isDirectory, modificationTime }. */
+const getInfoStorage = async (path) => {
+  if (isSafUri(path) && safX) {
+    try {
+      const detail = await safX.stat(path);
+      return {
+        exists: true,
+        size: detail.size ?? 0,
+        isDirectory: detail.type === 'directory',
+        modificationTime: detail.lastModified ? detail.lastModified / 1000 : undefined,
+      };
+    } catch {
+      return { exists: false, size: 0, isDirectory: false, modificationTime: undefined };
+    }
+  }
+  const info = await FileSystem.getInfoAsync(path);
+  return {
+    exists: info.exists,
+    size: info.size ?? 0,
+    isDirectory: info.isDirectory ?? false,
+    modificationTime: info.modificationTime,
+  };
+};
+
+/** List directory contents. Returns array of { name, uri, type, size }. */
+const listDirStorage = async (path) => {
+  if (isSafUri(path) && safX) {
+    const list = await safX.listFiles(path);
+    return list.map((f) => ({ name: f.name, uri: f.uri, type: f.type, size: f.size ?? 0 }));
+  }
+  const names = await FileSystem.readDirectoryAsync(path);
+  const result = [];
+  for (const name of names) {
+    const itemPath = `${path}${path.endsWith('/') ? '' : '/'}${name}`;
+    const info = await FileSystem.getInfoAsync(itemPath);
+    result.push({ name, uri: itemPath, type: info.isDirectory ? 'directory' : 'file', size: info.size ?? 0 });
+  }
+  return result;
+};
+
+/** Delete file or directory at path. */
+const deleteFileStorage = async (path) => {
+  if (isSafUri(path) && safX) {
+    await safX.unlink(path);
+    return;
+  }
+  await FileSystem.deleteAsync(path, { idempotent: true });
+};
+
+/** Copy from file URI (e.g. camera) to storage path (file or content://). */
+const copyFromFileToStorage = async (sourceFileUri, destPath) => {
+  if (isSafUri(destPath) && safX) {
+    const base64 = await FileSystem.readAsStringAsync(sourceFileUri, { encoding: FileSystem.EncodingType.Base64 });
+    await safX.writeFile(destPath, base64, { encoding: 'base64' });
+    return;
+  }
+  await FileSystem.copyAsync({ from: sourceFileUri, to: destPath });
 };
 
 /**
@@ -171,10 +278,25 @@ export const initStorage = async () => {
     throw new Error('FileSystem.documentDirectory is not available');
   }
 
-  // On Android, try Documents/Download so files are visible in file manager
+  // On Android, ensure external path (if set) is still writable; clear if not
   if (Platform.OS === 'android') {
     const storageConfig = await loadConfig('storage_location');
-    if (!storageConfig?.externalPath) {
+    if (storageConfig?.externalPath) {
+      const base = storageConfig.externalPath.endsWith('/')
+        ? storageConfig.externalPath
+        : `${storageConfig.externalPath}/`;
+      const subdirs = ['', 'images/', 'data/', 'config/', 'cache/', 'exports/'];
+      for (const sub of subdirs) {
+        const ok = await ensureDir(base + sub, 1);
+        if (!ok) {
+          await deleteConfig('storage_location');
+          baseStorageDirCache = null;
+          baseStorageDirPromise = null;
+          console.warn('[StorageService] External path no longer writable, falling back to internal');
+          break;
+        }
+      }
+    } else {
       console.log('[StorageService] Trying external storage (Documents/Download)...');
       const autoDetectResult = await autoDetectExternalStorage();
       if (autoDetectResult.success) {
@@ -304,7 +426,7 @@ export const initializeAppDirectories = async () => {
       const dir = await getPath();
       const created = await ensureDir(dir, 3);
       if (created) {
-        const info = await FileSystem.getInfoAsync(dir);
+        const info = await getInfoStorage(dir);
         if (info.exists) {
           results.directories.push({ path: dir, status: 'exists', name });
           console.log('[StorageService] ✓', name, 'directory exists:', dir);
@@ -422,22 +544,36 @@ export const setExternalStorageLocation = async (externalPath) => {
   }
 
   if (!externalPath) {
-    // Clear external storage config, use documentDirectory
     await deleteConfig('storage_location');
     baseStorageDirCache = null;
     baseStorageDirPromise = null;
     return { success: true, message: 'Using app documentDirectory' };
   }
 
+  const base = externalPath.endsWith('/') ? externalPath : `${externalPath}/`;
+
+  // SAF content URI: save config and create subdirs via ensureDir (no FileSystem)
+  if (isSafUri(externalPath)) {
+    try {
+      await saveConfig('storage_location', { externalPath: base, setAt: new Date().toISOString() });
+      baseStorageDirCache = null;
+      baseStorageDirPromise = null;
+      const subdirs = ['images', 'data', 'config', 'cache', 'exports'];
+      for (const d of subdirs) {
+        await ensureDir(`${base}${d}`, 1);
+      }
+      return { success: true, message: 'SAF storage location set successfully' };
+    } catch (error) {
+      console.error('[StorageService] Error setting SAF storage:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
   try {
-    // Verify the path exists and is writable
     const info = await FileSystem.getInfoAsync(externalPath);
     if (!info.exists) {
-      // Try to create the directory
       await FileSystem.makeDirectoryAsync(externalPath, { intermediates: true });
     }
-
-    // Test write capability
     const testFile = `${externalPath}/.storage_test`;
     const testContent = `test_${Date.now()}`;
     await FileSystem.writeAsStringAsync(testFile, testContent);
@@ -445,14 +581,10 @@ export const setExternalStorageLocation = async (externalPath) => {
     await FileSystem.deleteAsync(testFile, { idempotent: true });
 
     if (readBack === testContent) {
-      // Save the external path
-      await saveConfig('storage_location', { externalPath, setAt: new Date().toISOString() });
-      // Clear cache so next getBaseStorageDir() uses the new path
+      await saveConfig('storage_location', { externalPath: base, setAt: new Date().toISOString() });
       baseStorageDirCache = null;
       baseStorageDirPromise = null;
-      // Create subdirs so external storage has full structure
       const subdirs = ['images', 'data', 'config', 'cache', 'exports'];
-      const base = externalPath.endsWith('/') ? externalPath : `${externalPath}/`;
       for (const d of subdirs) {
         try {
           await FileSystem.makeDirectoryAsync(`${base}${d}`, { intermediates: true });
@@ -491,6 +623,26 @@ export const getStorageLocationInfo = async () => {
     path: FileSystem.documentDirectory || 'unknown',
     fullPath: `${FileSystem.documentDirectory}AgriCapture/`,
   };
+};
+
+/**
+ * If external path is set, verify it is still writable (e.g. permission not revoked).
+ * Clears the path and falls back to internal if not. Call on app start or when resuming.
+ */
+export const verifyExternalStorageAccess = async () => {
+  if (isWeb || Platform.OS !== 'android') return;
+  const storageConfig = await loadConfig('storage_location');
+  if (!storageConfig?.externalPath) return;
+  const base = storageConfig.externalPath.endsWith('/')
+    ? storageConfig.externalPath
+    : `${storageConfig.externalPath}/`;
+  const ok = await ensureDir(base, 1);
+  if (!ok) {
+    await deleteConfig('storage_location');
+    baseStorageDirCache = null;
+    baseStorageDirPromise = null;
+    console.warn('[StorageService] External storage no longer accessible, using internal');
+  }
 };
 
 /**
@@ -651,7 +803,7 @@ export const saveImage = async (uri, filename, cropLabel = null) => {
 
     let copySuccess = false;
     await withRetry(async () => {
-      await FileSystem.copyAsync({ from: uri, to: destPath });
+      await copyFromFileToStorage(uri, destPath);
       copySuccess = true;
     }, 3, 300);
 
@@ -660,9 +812,9 @@ export const saveImage = async (uri, filename, cropLabel = null) => {
     }
     console.log('[StorageService] File copy completed');
 
-    // Step 6: Verify the file was saved successfully
+    // Step 6: Verify the file was saved successfully (supports file and SAF paths)
     console.log('[StorageService] Step 6: Verifying saved image...');
-    const destInfo = await FileSystem.getInfoAsync(destPath);
+    const destInfo = await getInfoStorage(destPath);
     console.log('[StorageService] Destination file info:', JSON.stringify(destInfo));
 
     if (!destInfo.exists) {
@@ -670,8 +822,7 @@ export const saveImage = async (uri, filename, cropLabel = null) => {
     }
 
     if (destInfo.size === 0) {
-      // Clean up empty file
-      await FileSystem.deleteAsync(destPath, { idempotent: true });
+      await deleteFileStorage(destPath);
       throw new Error('Verification failed - saved file is empty. Storage may be full.');
     }
 
@@ -708,11 +859,9 @@ export const saveConfig = async (key, value) => {
       });
     } else {
       await withRetry(async () => {
-        await ensureDir(getConfigDir());
-        await FileSystem.writeAsStringAsync(
-          `${getConfigDir()}${key}.json`,
-          JSON.stringify(value)
-        );
+        const configDir = await getConfigDirAsync();
+        await ensureDir(configDir);
+        await writeFileStorage(`${configDir}${key}.json`, JSON.stringify(value));
       });
     }
 
@@ -738,11 +887,11 @@ export const loadConfig = async (key) => {
       const content = await AsyncStorage.getItem(`${CONFIG_PREFIX}${key}`);
       return content ? JSON.parse(content) : null;
     } else {
-      const path = `${getConfigDir()}${key}.json`;
-      const info = await FileSystem.getInfoAsync(path);
+      const configDir = await getConfigDirAsync();
+      const path = `${configDir}${key}.json`;
+      const info = await getInfoStorage(path);
       if (!info.exists) return null;
-
-      const content = await FileSystem.readAsStringAsync(path);
+      const content = await readFileStorage(path);
       return content ? JSON.parse(content) : null;
     }
   } catch (error) {
@@ -775,7 +924,8 @@ export const configExists = async (key) => {
     if (isWeb) {
       return (await AsyncStorage.getItem(`${CONFIG_PREFIX}${key}`)) !== null;
     }
-    const info = await FileSystem.getInfoAsync(`${getConfigDir()}${key}.json`);
+    const configDir = await getConfigDirAsync();
+    const info = await getInfoStorage(`${configDir}${key}.json`);
     return info.exists;
   } catch {
     return false;
@@ -871,8 +1021,21 @@ export const autoDetectExternalStorage = async () => {
 };
 
 // Export the lazy-evaluated path functions
-export { getImagesDir, getImagesDirAsync, getDataDir, getDataDirAsync, getConfigDir, getCacheDir, getExportsDir, getAppRootDir, getAppRootDirAsync };
+export { getImagesDir, getImagesDirAsync, getDataDir, getDataDirAsync, getConfigDir, getConfigDirAsync, getCacheDir, getCacheDirAsync, getExportsDir, getExportsDirAsync, getAppRootDir, getAppRootDirAsync };
+export { readFileStorage, writeFileStorage, getInfoStorage, listDirStorage, deleteFileStorage };
 export const isWebPlatform = () => isWeb;
+export const isSafStorage = (uri) => isSafUri(uri);
+
+/**
+ * Get currently set external storage path (Android), or null. For SAF, returns content URI with trailing slash.
+ */
+export const getExternalStoragePathAsync = async () => {
+  if (Platform.OS !== 'android' || isWeb) return null;
+  const c = await loadConfig('storage_location');
+  const p = c?.externalPath;
+  if (!p) return null;
+  return p.endsWith('/') ? p : `${p}/`;
+};
 
 /**
  * Exported ensureDir for use by other services (e.g., csvService)
@@ -1247,7 +1410,7 @@ export const verifyAndInitializeStorage = async () => {
   for (const getDir of verifyDirs) {
     try {
       const dir = await getDir();
-      const info = await FileSystem.getInfoAsync(dir);
+      const info = await getInfoStorage(dir);
       if (!info.exists || !info.isDirectory) {
         console.error('[StorageService] Directory verification failed:', dir);
         results.errors.push({ path: dir, error: 'Directory does not exist or is not accessible' });

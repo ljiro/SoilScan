@@ -20,12 +20,10 @@ import {
   UIManager,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-// Use legacy API - supported until SDK 55
-import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import { readCSV, deleteFromCSV, updateCSVField, updateCSVRow, parseCSVToRecords } from '../services/csvService';
 import { fonts, fontSizes, colors, radius, spacing, shadows, layout } from '../constants/theme';
-import { getAppRootDir } from '../services/storageService';
+import { getAppRootDir, getAppRootDirAsync, getInfoStorage, deleteFileStorage } from '../services/storageService';
 import EditMetadataModal from '../components/EditMetadataModal';
 
 // Enable LayoutAnimation on Android
@@ -53,7 +51,7 @@ const logDebug = (message, data = null) => {
  * - Just filename: "image.jpg" -> "{documentDir}AgriCapture/images/image.jpg"
  * - Already full path: returns as-is
  */
-const resolveImagePath = (imageFilename) => {
+const resolveImagePath = (imageFilename, appRootOverride) => {
   if (!imageFilename) {
     logDebug('resolveImagePath: No filename provided');
     return null;
@@ -62,7 +60,7 @@ const resolveImagePath = (imageFilename) => {
   // Trim whitespace and remove any quotes
   const cleanFilename = imageFilename.trim().replace(/^["']|["']$/g, '');
 
-  const appRoot = getAppRootDir(); // "{documentDir}AgriCapture/"
+  const appRoot = appRootOverride != null ? appRootOverride : getAppRootDir();
   logDebug('resolveImagePath input:', cleanFilename);
   logDebug('resolveImagePath appRoot:', appRoot);
 
@@ -242,16 +240,15 @@ export default function ReviewScreen({ navigation }) {
       }
 
       const data = [];
+      const appRoot = await getAppRootDirAsync();
 
       for (let index = 0; index < parsedRecords.length; index++) {
         const record = { ...parsedRecords[index] };
         record.id = index.toString();
 
-        // Resolve image path for display. Existence is not checked here to avoid
-        // N filesystem calls on load (slows down with many records). The list
-        // shows the path; missing images will fail to load in the Image component.
+        // Resolve image path for display (use async base for external/SAF storage)
         if (record.image_filename) {
-          record._resolvedImagePath = resolveImagePath(record.image_filename);
+          record._resolvedImagePath = resolveImagePath(record.image_filename, appRoot);
         }
 
         data.push(record);
@@ -468,12 +465,13 @@ export default function ReviewScreen({ navigation }) {
 
               // Delete the image file
               if (item.image_filename) {
-                const imagePath = item._resolvedImagePath || resolveImagePath(item.image_filename);
+                const appRoot = await getAppRootDirAsync();
+                const imagePath = item._resolvedImagePath || resolveImagePath(item.image_filename, appRoot);
                 logDebug('Deleting image at:', imagePath);
                 try {
-                  const fileInfo = await FileSystem.getInfoAsync(imagePath);
+                  const fileInfo = await getInfoStorage(imagePath);
                   if (fileInfo.exists) {
-                    await FileSystem.deleteAsync(imagePath);
+                    await deleteFileStorage(imagePath);
                     logDebug('Image deleted successfully');
                   } else {
                     logDebug('Image file not found for deletion');
@@ -697,9 +695,9 @@ export default function ReviewScreen({ navigation }) {
                 // Delete image file
                 if (record._resolvedImagePath) {
                   try {
-                    const fileInfo = await FileSystem.getInfoAsync(record._resolvedImagePath);
+                    const fileInfo = await getInfoStorage(record._resolvedImagePath);
                     if (fileInfo.exists) {
-                      await FileSystem.deleteAsync(record._resolvedImagePath);
+                      await deleteFileStorage(record._resolvedImagePath);
                     }
                   } catch (err) {
                     console.warn('Could not delete image:', err.message);
@@ -728,8 +726,8 @@ export default function ReviewScreen({ navigation }) {
     // Use the pre-resolved path or resolve now
     let imagePath = item._resolvedImagePath || resolveImagePath(item.image_filename);
 
-    // Ensure the path has proper file:// prefix for Image component
-    if (imagePath && !imagePath.startsWith('file://') && !imagePath.startsWith('http')) {
+    // Ensure the path has proper file:// prefix for Image (content:// and http stay as-is)
+    if (imagePath && !imagePath.startsWith('file://') && !imagePath.startsWith('content://') && !imagePath.startsWith('http')) {
       imagePath = `file://${imagePath}`;
     }
 

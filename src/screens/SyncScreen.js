@@ -14,7 +14,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import JSZip from 'jszip';
 import { getCSVPath, readCSV, parseCSVContent } from '../services/csvService';
-import { loadConfig } from '../services/storageService';
+import { loadConfig, getImagesDirAsync, getInfoStorage, readFileStorage, listDirStorage } from '../services/storageService';
 
 // Helper to sanitize names for filenames
 const sanitizeName = (name) => {
@@ -24,9 +24,6 @@ const sanitizeName = (name) => {
     .replace(/\s+/g, '_')
     .substring(0, 30);
 };
-
-// Base directories
-const getImagesDir = () => `${FileSystem.documentDirectory}AgriCapture/images/`;
 
 const SyncScreen = () => {
   const [isLoading, setIsLoading] = useState(true);
@@ -53,18 +50,17 @@ const SyncScreen = () => {
   const scanImages = async (dir) => {
     const files = [];
     try {
-      const dirInfo = await FileSystem.getInfoAsync(dir);
+      const dirInfo = await getInfoStorage(dir);
       if (!dirInfo.exists) return files;
 
-      const items = await FileSystem.readDirectoryAsync(dir);
+      const items = await listDirStorage(dir);
       for (const item of items) {
-        const path = `${dir}${item}`;
-        const info = await FileSystem.getInfoAsync(path);
-        if (info.isDirectory) {
-          const subFiles = await scanImages(`${path}/`);
+        const path = item.type === 'directory' ? item.uri + '/' : item.uri;
+        if (item.type === 'directory') {
+          const subFiles = await scanImages(path);
           files.push(...subFiles);
-        } else if (/\.(jpg|jpeg|png)$/i.test(item)) {
-          files.push(path);
+        } else if (/\.(jpg|jpeg|png)$/i.test(item.name)) {
+          files.push(item.uri);
         }
       }
     } catch (e) {
@@ -79,7 +75,8 @@ const SyncScreen = () => {
       const rows = parseCSVContent(csvContent);
       const totalRecords = Math.max(0, rows.length - 1);
 
-      const imageFiles = await scanImages(getImagesDir());
+      const imagesDir = await getImagesDirAsync();
+      const imageFiles = await scanImages(imagesDir);
 
       setStats({ totalRecords, totalImages: imageFiles.length, imageFiles });
       console.log('[Sync] Stats loaded:', totalRecords, 'records,', imageFiles.length, 'images');
@@ -128,7 +125,7 @@ const SyncScreen = () => {
       const csvPath = getCSVPath();
       console.log('[Sync] Step 3: Adding CSV from:', csvPath);
       try {
-        const csvInfo = await FileSystem.getInfoAsync(csvPath);
+        const csvInfo = await getInfoStorage(csvPath);
         console.log('[Sync] CSV info:', csvInfo);
         if (csvInfo.exists) {
           const csvData = await FileSystem.readAsStringAsync(csvPath);
@@ -151,9 +148,7 @@ const SyncScreen = () => {
         console.log('[Sync] Adding image:', imgPath);
 
         try {
-          const imgData = await FileSystem.readAsStringAsync(imgPath, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
+          const imgData = await readFileStorage(imgPath, { encoding: 'base64' });
           console.log('[Sync] Image data length:', imgData.length);
           // Use relative path to preserve folder structure
           const relPath = imgPath.replace(baseDir, '');
@@ -293,16 +288,14 @@ const SyncScreen = () => {
       }
 
       const zip = new JSZip();
-      const baseDir = getImagesDir();
+      const baseDir = await getImagesDirAsync();
 
       for (let i = 0; i < stats.imageFiles.length; i++) {
         const imgPath = stats.imageFiles[i];
         setExportProgress(`Adding image ${i + 1}/${stats.imageFiles.length}...`);
 
         try {
-          const imgData = await FileSystem.readAsStringAsync(imgPath, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
+          const imgData = await readFileStorage(imgPath, { encoding: 'base64' });
           const relPath = imgPath.replace(baseDir, '');
           zip.file(relPath, imgData, { base64: true });
         } catch (e) {
