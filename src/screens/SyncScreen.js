@@ -13,7 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import JSZip from 'jszip';
-import { getCSVPath, readCSV, parseCSVContent } from '../services/csvService';
+import { getCSVPath, getCSVPathAsync, readCSV, parseCSVContent } from '../services/csvService';
 import { loadConfig, getImagesDirAsync, getInfoStorage, readFileStorage, listDirStorage } from '../services/storageService';
 
 // Helper to sanitize names for filenames
@@ -122,13 +122,13 @@ const SyncScreen = () => {
 
       // Add CSV
       setExportProgress('Adding CSV data...');
-      const csvPath = getCSVPath();
+      const csvPath = await getCSVPathAsync();
       console.log('[Sync] Step 3: Adding CSV from:', csvPath);
       try {
         const csvInfo = await getInfoStorage(csvPath);
         console.log('[Sync] CSV info:', csvInfo);
         if (csvInfo.exists) {
-          const csvData = await FileSystem.readAsStringAsync(csvPath);
+          const csvData = await readFileStorage(csvPath);
           console.log('[Sync] CSV data length:', csvData.length);
           zip.file('agricapture_data.csv', csvData);
           fileCount++;
@@ -139,7 +139,7 @@ const SyncScreen = () => {
       }
 
       // Add images
-      const baseDir = getImagesDir();
+      const baseDir = await getImagesDirAsync();
       console.log('[Sync] Step 4: Adding images from:', baseDir);
       console.log('[Sync] Image count:', stats.imageFiles.length);
       for (let i = 0; i < stats.imageFiles.length; i++) {
@@ -243,8 +243,8 @@ const SyncScreen = () => {
         return;
       }
 
-      const csvPath = getCSVPath();
-      const csvInfo = await FileSystem.getInfoAsync(csvPath);
+      const csvPath = await getCSVPathAsync();
+      const csvInfo = await getInfoStorage(csvPath);
 
       if (!csvInfo.exists) {
         Alert.alert('No Data', 'No CSV file found');

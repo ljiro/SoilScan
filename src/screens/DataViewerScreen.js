@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 // Use legacy API - supported until SDK 55
-import { readCSV, getCSVPath, parseCSVContent, resetCSV } from '../services/csvService';
+import { readCSV, getCSVPathAsync, parseCSVContent, resetCSV } from '../services/csvService';
 import { getInfoStorage } from '../services/storageService';
 import { Alert } from 'react-native';
 import { fonts, fontSizes, colors, radius, spacing, shadows, layout } from '../constants/theme';
@@ -193,8 +193,8 @@ export default function DataViewerScreen({ navigation }) {
 
       setData(rows);
 
-      // Get file modification time
-      const csvPath = getCSVPath();
+      // Get file modification time (async path for external/SAF storage)
+      const csvPath = await getCSVPathAsync();
       logDebug('CSV path:', csvPath);
 
       try {
