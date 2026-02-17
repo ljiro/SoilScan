@@ -305,7 +305,7 @@ export const resetCSV = async () => {
     const csvPath = await getCSVFilePathAsync();
     const fileInfo = await getInfoStorage(csvPath);
     if (fileInfo.exists) {
-      await FileSystem.deleteAsync(csvPath, { idempotent: true });
+      await deleteFileStorage(csvPath);
     }
     await writeFileStorage(csvPath, CSV_HEADERS.join(',') + '\n');
     invalidateCSVCache();

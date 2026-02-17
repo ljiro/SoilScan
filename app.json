@@ -28,7 +28,7 @@
       ],
       "expo-font",
       "expo-web-browser",
-      "./plugins/withAndroidStoragePermissions.js"
+      "./plugins/withAndroidStoragePermissions.js","./plugins/enableLargeHeap.js"
     ],
     "ios": {
       "supportsTablet": true,

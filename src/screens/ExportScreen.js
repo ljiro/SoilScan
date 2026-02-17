@@ -16,7 +16,9 @@ import * as Sharing from 'expo-sharing';
 import * as Haptics from 'expo-haptics';
 import JSZip from 'jszip';
 import { getCSVPathAsync, readCSV, parseCSVContent, parseCSVToRecords, getCSVHeaders } from '../services/csvService';
+import * as FileSystem from 'expo-file-system/legacy';
 import { getImagesDirAsync, getAppRootDirAsync, loadConfig, ensureDir, getInfoStorage, readFileStorage, writeFileStorage, listDirStorage, deleteFileStorage } from '../services/storageService';
+import { writeZipWithChunkedFallback } from '../utils/zipChunkedWrite';
 import { fonts, fontSizes, colors, radius, spacing, shadows, layout } from '../constants/theme';
 import ExportRecordSelector from '../components/ExportRecordSelector';
 import ExportRecordsList from '../components/ExportRecordsList';
@@ -226,15 +228,13 @@ export default function ExportScreen({ navigation }) {
         done++;
       }
 
-      setZipProgress({ current: done, total: done, phase: 'Creating ZIP...' });
-      await yieldToUI();
-
-      const zipBlob = await zip.generateAsync(
-        { type: 'base64', compression: 'DEFLATE', compressionOptions: { level: 3 } }
-      );
       const fileName = `SoilScan_export_${new Date().toISOString().slice(0, 10)}.zip`;
-      const outPath = `${exportsDir}${fileName}`;
-      await writeFileStorage(outPath, zipBlob, { encoding: 'base64' });
+      const outPath = await writeZipWithChunkedFallback(
+        fileName,
+        zip,
+        FileSystem.cacheDirectory,
+        (phase) => setZipProgress((p) => (p ? { ...p, phase } : null))
+      );
 
       setZipProgress(null);
       const available = await Sharing.isAvailableAsync();
@@ -247,7 +247,7 @@ export default function ExportScreen({ navigation }) {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         } catch (_) {}
       } else {
-        Alert.alert('Export saved', `ZIP saved to exports folder: ${fileName}`);
+        Alert.alert('Export saved', `ZIP saved: ${fileName}`);
       }
     } catch (error) {
       console.error('[ExportScreen] ZIP export error:', error);

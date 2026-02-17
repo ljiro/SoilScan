@@ -534,6 +534,58 @@ export const getLabelBasedPath = async (cropLabel = null) => {
 };
 
 /**
+ * Build relative image path from organization labels (for moving/reorganizing).
+ * Format: images/municipality/barangay/farm/crop/filename
+ * @param {Object} opts - { municipality, barangay, farmName, cropLabel, filename }
+ * @returns {string} Relative path e.g. "images/la_trinidad/balili/no_farm/corn/IMG_001.jpg"
+ */
+export const buildRelativeImagePathFromLabels = (opts) => {
+  const m = sanitizeDirName(opts.municipality || 'unknown');
+  const b = sanitizeDirName(opts.barangay || 'unknown');
+  const f = opts.farmName ? sanitizeDirName(opts.farmName) : 'no_farm';
+  const crop = opts.cropLabel ? sanitizeDirName(opts.cropLabel) : 'mixed_crops';
+  const filename = opts.filename || '';
+  if (!filename) return '';
+  return `images/${m}/${b}/${f}/${crop}/${filename}`;
+};
+
+/**
+ * Move an image to a new organized path and return the new relative path.
+ * Used when user edits album/organization (municipality, barangay, farm, crop).
+ * @param {string} oldFullPath - Current full path (file:// or content://) to the image
+ * @param {string} newRelativePath - New relative path e.g. "images/muni/barangay/farm/crop/filename.jpg"
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export const moveImageToNewPath = async (oldFullPath, newRelativePath) => {
+  if (isWeb || !oldFullPath || !newRelativePath) {
+    return { success: false, error: 'Invalid path or web' };
+  }
+  try {
+    const imagesBase = await getImagesDirAsync();
+    const newFullPath = newRelativePath.startsWith('images/')
+      ? `${imagesBase}${newRelativePath.replace(/^images\//, '')}`
+      : `${imagesBase}${newRelativePath}`;
+    const dirForNew = newFullPath.replace(/\/[^/]+$/, '/');
+    const exists = await getInfoStorage(oldFullPath);
+    if (!exists.exists) {
+      return { success: false, error: 'Source image not found' };
+    }
+    const base64 = await readFileStorage(oldFullPath, { encoding: 'base64' });
+    await ensureDir(dirForNew, 3);
+    await writeFileStorage(newFullPath, base64, { encoding: 'base64' });
+    const verify = await getInfoStorage(newFullPath);
+    if (!verify.exists) {
+      return { success: false, error: 'Move verification failed' };
+    }
+    await deleteFileStorage(oldFullPath);
+    return { success: true };
+  } catch (error) {
+    console.error('[StorageService] moveImageToNewPath error:', error);
+    return { success: false, error: error?.message || 'Move failed' };
+  }
+};
+
+/**
  * Set external storage location (Android only)
  * @param {string} externalPath - Path to external storage directory (e.g., /storage/emulated/0/AgriCapture)
  * @returns {Promise<{success: boolean, error?: string}>}

@@ -21,9 +21,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { readCSV, deleteFromCSV, updateCSVField, updateCSVRow, parseCSVToRecords } from '../services/csvService';
+import { readCSV, deleteFromCSV, updateCSVField, updateCSVRow, parseCSVToRecords, resetCSV } from '../services/csvService';
 import { fonts, fontSizes, colors, radius, spacing, shadows, layout } from '../constants/theme';
-import { getAppRootDir, getAppRootDirAsync, getInfoStorage, deleteFileStorage } from '../services/storageService';
+import { getAppRootDir, getAppRootDirAsync, getInfoStorage, deleteFileStorage, buildRelativeImagePathFromLabels, moveImageToNewPath } from '../services/storageService';
 import EditMetadataModal from '../components/EditMetadataModal';
 
 // Enable LayoutAnimation on Android
@@ -150,6 +150,9 @@ export default function ReviewScreen({ navigation }) {
 
   // Long-press delete state for spots
   const [spotShowingDelete, setSpotShowingDelete] = useState(null);
+
+  // Delete all records in progress
+  const [deletingAll, setDeletingAll] = useState(false);
 
   // Spot editing state
   const [editingSpot, setEditingSpot] = useState(null);
@@ -442,6 +445,51 @@ export default function ReviewScreen({ navigation }) {
     }));
   };
 
+  const handleDeleteAllRecords = () => {
+    if (records.length === 0) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      'Delete All Records',
+      `This will permanently delete all ${records.length} records and their images. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setDeletingAll(true);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+              const csvContent = await readCSV();
+              const allRecords = parseCSVToRecords(csvContent);
+              const appRoot = await getAppRootDirAsync();
+              for (const rec of allRecords) {
+                if (rec.image_filename) {
+                  const path = resolveImagePath(rec.image_filename, appRoot);
+                  try {
+                    const info = await getInfoStorage(path);
+                    if (info.exists) await deleteFileStorage(path);
+                  } catch (e) {
+                    logDebug('Delete all: skip image', e?.message);
+                  }
+                }
+              }
+              const resetResult = await resetCSV();
+              if (!resetResult.success) throw new Error(resetResult.error);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              await loadRecords();
+            } catch (err) {
+              console.error('Delete all error:', err);
+              Alert.alert('Error', err.message || 'Failed to delete all records.');
+            } finally {
+              setDeletingAll(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleDeleteRecord = (item) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
@@ -460,10 +508,11 @@ export default function ReviewScreen({ navigation }) {
             try {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
-              // Delete from CSV
-              await deleteFromCSV(item.uuid);
+              const deletedRow = await deleteFromCSV(item.uuid);
+              if (deletedRow == null) {
+                throw new Error('Record not found or could not remove from CSV');
+              }
 
-              // Delete the image file
               if (item.image_filename) {
                 const appRoot = await getAppRootDirAsync();
                 const imagePath = item._resolvedImagePath || resolveImagePath(item.image_filename, appRoot);
@@ -473,8 +522,6 @@ export default function ReviewScreen({ navigation }) {
                   if (fileInfo.exists) {
                     await deleteFileStorage(imagePath);
                     logDebug('Image deleted successfully');
-                  } else {
-                    logDebug('Image file not found for deletion');
                   }
                 } catch (deleteErr) {
                   logDebug('Error deleting image:', deleteErr.message);
@@ -482,13 +529,11 @@ export default function ReviewScreen({ navigation }) {
               }
 
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-              // Reload records
               loadRecords();
             } catch (error) {
               console.error('Error deleting record:', error);
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-              Alert.alert('Error', 'Failed to delete the record. Please try again.');
+              Alert.alert('Error', error.message || 'Failed to delete the record. Please try again.');
             }
           },
         },
@@ -550,10 +595,45 @@ export default function ReviewScreen({ navigation }) {
     setEditingRecord(item);
   };
 
-  // Save edited record
+  // Build image filename from record/updates so file on disk and CSV reflect spot/shot/org
+  const buildImageFilenameFromRecord = (record, updates) => {
+    const spot = updates.spot_number ?? record.spot_number ?? 1;
+    const shot = updates.shot_number ?? record.shot_number ?? 1;
+    const uuidShort = (record.uuid || '').slice(0, 8) || 'unknown';
+    const ext = (record.image_filename && record.image_filename.match(/\.[a-zA-Z0-9]+$/))?.[0] || '.jpg';
+    return `spot${spot}_shot${shot}_${uuidShort}${ext}`;
+  };
+
+  // Save edited record: move/rename image to reflect spot, shot, org; update CSV
   const saveEditedRecord = async (uuid, updates) => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const record = editingRecord;
+      const resolvedPath = record?._resolvedImagePath || (record?.image_filename ? resolveImagePath(record.image_filename, getAppRootDir()) : null);
+      const hasImage = record?.image_filename && resolvedPath;
+
+      if (hasImage) {
+        const newFilename = buildImageFilenameFromRecord(record, updates);
+        const firstCrop = updates.crops != null && String(updates.crops).trim()
+          ? String(updates.crops).split(',')[0].trim()
+          : null;
+        const newRelativePath = buildRelativeImagePathFromLabels({
+          municipality: updates.municipality ?? record.municipality,
+          barangay: updates.barangay ?? record.barangay,
+          farmName: updates.farm_name ?? record.farm_name,
+          cropLabel: firstCrop,
+          filename: newFilename,
+        });
+        if (newRelativePath && newRelativePath !== record.image_filename) {
+          const moveResult = await moveImageToNewPath(resolvedPath, newRelativePath);
+          if (moveResult.success) {
+            updates.image_filename = newRelativePath;
+          } else {
+            console.warn('[ReviewScreen] Could not move image to new path:', moveResult.error);
+          }
+        }
+      }
+
       const result = await updateCSVRow(uuid, updates);
       if (result.success) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -686,35 +766,29 @@ export default function ReviewScreen({ navigation }) {
           onPress: async () => {
             try {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-
-              // Get all records for this spot
               const spotRecords = records.filter(r => r.spot_number?.toString() === spot);
+              const appRoot = await getAppRootDirAsync();
 
-              // Delete each record
               for (const record of spotRecords) {
-                // Delete image file
-                if (record._resolvedImagePath) {
+                const imagePath = record._resolvedImagePath || (record.image_filename ? resolveImagePath(record.image_filename, appRoot) : null);
+                if (imagePath) {
                   try {
-                    const fileInfo = await getInfoStorage(record._resolvedImagePath);
-                    if (fileInfo.exists) {
-                      await deleteFileStorage(record._resolvedImagePath);
-                    }
+                    const fileInfo = await getInfoStorage(imagePath);
+                    if (fileInfo.exists) await deleteFileStorage(imagePath);
                   } catch (err) {
                     console.warn('Could not delete image:', err.message);
                   }
                 }
-                // Delete CSV row
-                await deleteFromCSV(record.uuid);
+                const deleted = await deleteFromCSV(record.uuid);
+                if (deleted == null) throw new Error('Could not remove a record from CSV');
               }
 
-              // Refresh the list
               setSpotShowingDelete(null);
               loadRecords();
-
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             } catch (error) {
               console.error('Error deleting spot:', error);
-              Alert.alert('Error', 'Failed to delete some records. Please try again.');
+              Alert.alert('Error', error.message || 'Failed to delete some records. Please try again.');
             }
           },
         },
@@ -1279,6 +1353,20 @@ export default function ReviewScreen({ navigation }) {
               <Text style={styles.subtitle}>View captured data</Text>
             </View>
             <View style={styles.headerActions}>
+              {records.length > 0 && (
+                <TouchableOpacity
+                  style={styles.refreshButton}
+                  onPress={handleDeleteAllRecords}
+                  disabled={deletingAll || loading}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="trash-outline"
+                    size={22}
+                    color={colors.text.inverse}
+                  />
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 style={styles.refreshButton}
                 onPress={onRefresh}

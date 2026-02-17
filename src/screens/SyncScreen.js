@@ -15,6 +15,7 @@ import * as Sharing from 'expo-sharing';
 import JSZip from 'jszip';
 import { getCSVPath, getCSVPathAsync, readCSV, parseCSVContent } from '../services/csvService';
 import { loadConfig, getImagesDirAsync, getInfoStorage, readFileStorage, listDirStorage } from '../services/storageService';
+import { writeZipWithChunkedFallback } from '../utils/zipChunkedWrite';
 
 // Helper to sanitize names for filenames
 const sanitizeName = (name) => {
@@ -150,7 +151,6 @@ const SyncScreen = () => {
         try {
           const imgData = await readFileStorage(imgPath, { encoding: 'base64' });
           console.log('[Sync] Image data length:', imgData.length);
-          // Use relative path to preserve folder structure
           const relPath = imgPath.replace(baseDir, '');
           console.log('[Sync] Relative path:', relPath);
           zip.file(`images/${relPath}`, imgData, { base64: true });
@@ -168,13 +168,6 @@ const SyncScreen = () => {
         return;
       }
 
-      // Generate ZIP
-      console.log('[Sync] Step 5: Generating ZIP...');
-      console.log('[Sync] zip.generateAsync:', typeof zip.generateAsync);
-      setExportProgress('Creating ZIP file...');
-      const zipBase64 = await zip.generateAsync({ type: 'base64' });
-      console.log('[Sync] ZIP base64 length:', zipBase64.length);
-
       // Generate filename with location and timestamp
       const now = new Date();
       const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
@@ -189,17 +182,13 @@ const SyncScreen = () => {
         zipFilename = `AgriCapture_${dateStr}_${timeStr}.zip`;
       }
 
-      const zipPath = `${FileSystem.cacheDirectory}${zipFilename}`;
-      console.log('[Sync] Step 6: Writing ZIP to:', zipPath);
-      console.log('[Sync] cacheDirectory:', FileSystem.cacheDirectory);
-
-      await FileSystem.writeAsStringAsync(zipPath, zipBase64, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      console.log('[Sync] ZIP written');
+      // Write ZIP in chunks to avoid OOM (falls back to single write if next API unavailable)
+      console.log('[Sync] Step 5: Generating and writing ZIP...');
+      const zipPath = await writeZipWithChunkedFallback(zipFilename, zip, FileSystem.cacheDirectory, setExportProgress);
+      console.log('[Sync] ZIP written to:', zipPath);
 
       // Verify file
-      console.log('[Sync] Step 7: Verifying ZIP...');
+      console.log('[Sync] Step 6: Verifying ZIP...');
       const zipInfo = await FileSystem.getInfoAsync(zipPath);
       console.log('[Sync] ZIP created:', zipPath, 'size:', zipInfo.size);
 
@@ -303,9 +292,6 @@ const SyncScreen = () => {
         }
       }
 
-      setExportProgress('Creating ZIP...');
-      const zipBase64 = await zip.generateAsync({ type: 'base64' });
-
       // Generate filename with location and timestamp
       const now = new Date();
       const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
@@ -320,11 +306,7 @@ const SyncScreen = () => {
         zipFilename = `AgriCapture_images_${dateStr}_${timeStr}.zip`;
       }
 
-      const zipPath = `${FileSystem.cacheDirectory}${zipFilename}`;
-
-      await FileSystem.writeAsStringAsync(zipPath, zipBase64, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      const zipPath = await writeZipWithChunkedFallback(zipFilename, zip, FileSystem.cacheDirectory, setExportProgress);
 
       await Sharing.shareAsync(zipPath, {
         mimeType: 'application/zip',
