@@ -1,5 +1,12 @@
 # lan-network
 
+## 0.1.7
+
+### Patch Changes
+
+- Compare subnet-masked addresses before accepting DHCP discover message
+  Submitted by [@hyoban](https://github.com/hyoban) (See [#12](https://github.com/kitten/lan-network/pull/12))
+
 ## 0.1.6
 
 ### Patch Changes

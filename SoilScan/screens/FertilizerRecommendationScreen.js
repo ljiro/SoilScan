@@ -9,7 +9,8 @@ import {
   ActivityIndicator,
   Animated,
   FlatList,
-  Dimensions
+  Dimensions,
+  Alert
 } from 'react-native';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -149,26 +150,31 @@ const FertilizerRecommendationScreen = ({ route }) => {
   const slideUpAnim = useRef(new Animated.Value(30)).current;
   const buttonScale = useRef(new Animated.Value(1)).current;
 
-  const { soilTexture } = route.params || {};
+  // Get the passed parameters
+  const routeParams = route.params || {};
+  console.log('Route params received:', routeParams);
   
+  // Initialize form data with route params
   const [formData, setFormData] = useState({
-    temperature: '',
-    humidity: '',
-    moisture: '',
-    soilType: '',
+    temperature: routeParams.temperature || '',
+    humidity: routeParams.humidity || '',
+    moisture: routeParams.moisture || '',
+    soilType: routeParams.soilType || '',
     cropType: '',
-    nitrogen: '',
-    potassium: '',
-    phosphorous: ''
+    nitrogen: routeParams.nitrogen || '',
+    potassium: routeParams.potassium || '',
+    phosphorous: routeParams.phosphorous || ''
   });
   
   const [recommendation, setRecommendation] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [selectedTexture, setSelectedTexture] = useState(null);
+  const [selectedTexture, setSelectedTexture] = useState(routeParams.soilType || null);
   const [selectedCrop, setSelectedCrop] = useState(null);
 
   useEffect(() => {
+    console.log('Form data after initialization:', formData);
+    
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -182,48 +188,37 @@ const FertilizerRecommendationScreen = ({ route }) => {
         useNativeDriver: true
       })
     ]).start();
+  }, []);
 
-    if (soilTexture) {
-      handleTextureSelect(soilTexture);
+  // Update form data when route params change
+  useEffect(() => {
+    if (routeParams && Object.keys(routeParams).length > 0) {
+      console.log('Updating form data with route params:', routeParams);
+      setFormData(prev => ({
+        ...prev,
+        temperature: routeParams.temperature || prev.temperature,
+        humidity: routeParams.humidity || prev.humidity,
+        moisture: routeParams.moisture || prev.moisture,
+        soilType: routeParams.soilType || prev.soilType,
+        nitrogen: routeParams.nitrogen || prev.nitrogen,
+        potassium: routeParams.potassium || prev.potassium,
+        phosphorous: routeParams.phosphorous || prev.phosphorous
+      }));
+      
+      if (routeParams.soilType) {
+        setSelectedTexture(routeParams.soilType);
+      }
     }
-  }, [soilTexture]);
+  }, [routeParams]);
 
   const handleTextureSelect = (texture) => {
     setSelectedTexture(texture);
     setFormData(prev => ({ ...prev, soilType: texture }));
-    
-    Animated.sequence([
-      Animated.timing(buttonScale, {
-        toValue: 0.95,
-        duration: 100,
-        useNativeDriver: true
-      }),
-      Animated.spring(buttonScale, {
-        toValue: 1,
-        friction: 3,
-        tension: 40,
-        useNativeDriver: true
-      })
-    ]).start();
   };
 
   const handleCropSelect = (crop) => {
     setSelectedCrop(crop);
     setFormData(prev => ({ ...prev, cropType: crop }));
-    
-    Animated.sequence([
-      Animated.timing(buttonScale, {
-        toValue: 0.95,
-        duration: 100,
-        useNativeDriver: true
-      }),
-      Animated.spring(buttonScale, {
-        toValue: 1,
-        friction: 3,
-        tension: 40,
-        useNativeDriver: true
-      })
-    ]).start();
   };
 
   const handleInputChange = (name, value) => {
@@ -241,22 +236,29 @@ const FertilizerRecommendationScreen = ({ route }) => {
       return false;
     }
     
-    if (!formData.nitrogen || !formData.potassium || !formData.phosphorous) {
-      setError('Please enter all NPK values');
+    // Validate NPK values
+    const nitrogenVal = parseFloat(formData.nitrogen);
+    const potassiumVal = parseFloat(formData.potassium);
+    const phosphorousVal = parseFloat(formData.phosphorous);
+    
+    if (isNaN(nitrogenVal) || isNaN(potassiumVal) || isNaN(phosphorousVal)) {
+      setError('Please enter valid NPK values (numbers only)');
       return false;
     }
     
-    if (!formData.temperature) {
-      setError('Please enter temperature');
+    if (!formData.temperature || isNaN(parseFloat(formData.temperature))) {
+      setError('Please enter a valid temperature');
       return false;
     }
     
-    if (!formData.humidity || formData.humidity < 0 || formData.humidity > 100) {
+    const humidityVal = parseFloat(formData.humidity);
+    if (isNaN(humidityVal) || humidityVal < 0 || humidityVal > 100) {
       setError('Please enter a valid humidity % (0-100)');
       return false;
     }
     
-    if (!formData.moisture || formData.moisture < 0 || formData.moisture > 100) {
+    const moistureVal = parseFloat(formData.moisture);
+    if (isNaN(moistureVal) || moistureVal < 0 || moistureVal > 100) {
       setError('Please enter a valid moisture % (0-100)');
       return false;
     }
@@ -282,6 +284,8 @@ const FertilizerRecommendationScreen = ({ route }) => {
         Phosphorous: parseFloat(formData.phosphorous)
       };
 
+      console.log('Sending API payload:', payload);
+
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: {
@@ -295,22 +299,112 @@ const FertilizerRecommendationScreen = ({ route }) => {
       }
 
       const data = await response.json();
+      console.log('API Response:', data);
+      
+      // Handle different response formats
+      let recommendedFertilizer;
+      
+      if (data.recommended_fertilizer) {
+        recommendedFertilizer = data.recommended_fertilizer;
+      } else if (data.prediction) {
+        recommendedFertilizer = data.prediction;
+      } else if (data.fertilizer) {
+        recommendedFertilizer = data.fertilizer;
+      } else {
+        recommendedFertilizer = determineFallbackFertilizer();
+        console.log('Using fallback fertilizer:', recommendedFertilizer);
+      }
+      
       setRecommendation({
-        name: data.recommended_fertilizer,
-        ...FERTILIZER_INFO[data.recommended_fertilizer] || {
-          description: 'Custom fertilizer recommendation',
-          composition: 'Varies based on your soil conditions',
-          benefits: ['Tailored to your specific crop and soil needs'],
-          application: 'Consult with local agricultural expert for precise application rates',
+        name: recommendedFertilizer,
+        ...FERTILIZER_INFO[recommendedFertilizer] || {
+          description: 'Custom fertilizer recommendation based on your soil analysis',
+          composition: 'Optimized blend for your specific conditions',
+          benefits: [
+            'Tailored to your soil nutrient levels',
+            'Matches your crop requirements',
+            'Considers environmental conditions'
+          ],
+          application: 'Apply based on soil test results and crop requirements',
           icon: 'star'
         }
       });
       
     } catch (err) {
-      setError(err.message || 'Failed to get recommendation');
+      console.error('API Error:', err);
+      const fallbackFertilizer = determineFallbackFertilizer();
+      setRecommendation({
+        name: fallbackFertilizer,
+        ...FERTILIZER_INFO[fallbackFertilizer] || FERTILIZER_INFO['NPK']
+      });
+      setError('API unavailable. Showing local recommendation based on your soil data.');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const determineFallbackFertilizer = () => {
+    const nitrogen = parseFloat(formData.nitrogen) || 0;
+    const phosphorus = parseFloat(formData.phosphorous) || 0;
+    const potassium = parseFloat(formData.potassium) || 0;
+
+    console.log('Calculating fallback with NPK:', { nitrogen, phosphorus, potassium });
+
+    if (nitrogen < 20 && phosphorus < 15 && potassium < 25) {
+      return 'NPK';
+    } else if (nitrogen < 20) {
+      return 'Urea';
+    } else if (phosphorus < 15) {
+      return 'DAP';
+    } else if (potassium < 25) {
+      return 'MOP';
+    } else if (nitrogen < 30 && phosphorus < 25) {
+      return '28-28-0';
+    } else {
+      return '10-10-10';
+    }
+  };
+
+  const clearForm = () => {
+    setFormData({
+      temperature: '',
+      humidity: '',
+      moisture: '',
+      soilType: '',
+      cropType: '',
+      nitrogen: '',
+      potassium: '',
+      phosphorous: ''
+    });
+    setSelectedTexture(null);
+    setSelectedCrop(null);
+    setRecommendation(null);
+    setError(null);
+  };
+
+  const showDebugInfo = () => {
+    Alert.alert(
+      'Debug Information',
+      `Route Params:
+      N: ${routeParams.nitrogen}
+      P: ${routeParams.phosphorous}
+      K: ${routeParams.potassium}
+      Soil: ${routeParams.soilType}
+      Temp: ${routeParams.temperature}
+      Humidity: ${routeParams.humidity}
+      Moisture: ${routeParams.moisture}
+      
+      Current Form Data:
+      N: ${formData.nitrogen}
+      P: ${formData.phosphorous}
+      K: ${formData.potassium}
+      Soil: ${formData.soilType}
+      Crop: ${formData.cropType}
+      Temp: ${formData.temperature}
+      Humidity: ${formData.humidity}
+      Moisture: ${formData.moisture}`,
+      [{ text: 'OK' }]
+    );
   };
 
   return (
@@ -330,15 +424,32 @@ const FertilizerRecommendationScreen = ({ route }) => {
           <View style={styles.header}>
             <View>
               <Text style={styles.headerTitle}>Fertilizer Recommendation</Text>
-              <Text style={styles.headerSubtitle}>Get personalized fertilizer suggestion</Text>
+              <Text style={styles.headerSubtitle}>
+                {routeParams.soilType ? `Pre-filled with soil analysis data` : 'Get personalized fertilizer suggestion'}
+              </Text>
             </View>
-            {soilTexture && (
+            {routeParams.soilType && (
               <View style={styles.detectedTag}>
                 <Icon name="leaf" size={14} color="#5D9C59" />
-                <Text style={styles.detectedText}>Detected: {soilTexture}</Text>
+                <Text style={styles.detectedText}>From Soil Scan</Text>
               </View>
             )}
           </View>
+
+          {/* Data Pre-filled Indicator */}
+          {routeParams.soilType && (
+            <View style={styles.prefilledBanner}>
+              <Icon name="check-circle" size={16} color="#fff" />
+              <Text style={styles.prefilledText}>
+                Soil analysis data pre-filled automatically
+              </Text>
+            </View>
+          )}
+
+          {/* Debug Button */}
+          <TouchableOpacity style={styles.debugButton} onPress={showDebugInfo}>
+            <Text style={styles.debugButtonText}>Debug Info</Text>
+          </TouchableOpacity>
 
           {/* Main Form */}
           <View style={styles.formCard}>
@@ -347,6 +458,11 @@ const FertilizerRecommendationScreen = ({ route }) => {
               <View style={styles.sectionHeader}>
                 <Icon name="envira" size={18} color="#5D9C59" style={styles.sectionIcon} />
                 <Text style={styles.sectionTitle}>Soil Type</Text>
+                {routeParams.soilType && (
+                  <View style={styles.autoFilledBadge}>
+                    <Text style={styles.autoFilledText}>Auto-filled</Text>
+                  </View>
+                )}
               </View>
               <Text style={styles.sectionDescription}>Select your soil type</Text>
               
@@ -408,111 +524,106 @@ const FertilizerRecommendationScreen = ({ route }) => {
               />
             </View>
 
-            {/* NPK Values */}
+            {/* NPK Values - SIMPLIFIED */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Icon name="flask" size={16} color="#5D9C59" style={styles.sectionIcon} />
                 <Text style={styles.sectionTitle}>Soil Nutrients (NPK)</Text>
+                {routeParams.nitrogen && (
+                  <View style={styles.autoFilledBadge}>
+                    <Text style={styles.autoFilledText}>From analysis</Text>
+                  </View>
+                )}
               </View>
-              <Text style={styles.sectionDescription}>Enter your soil nutrient levels</Text>
+              <Text style={styles.sectionDescription}>Your soil nutrient levels</Text>
               
               <View style={styles.inputRow}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Nitrogen     (N)</Text>
-                  <View style={styles.inputContainer}>
-                    <TextInput
-                      style={styles.input}
-                      keyboardType="numeric"
-                      value={formData.nitrogen}
-                      onChangeText={(text) => handleInputChange('nitrogen', text)}
-                      placeholder="0.0"
-                    />
-                  </View>
+                  <Text style={styles.inputLabel}>Nitrogen       (N)</Text>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.nitrogen}
+                    onChangeText={(text) => handleInputChange('nitrogen', text)}
+                    placeholder="0.0"
+                  />
                 </View>
                 
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>Phosphorous (P)</Text>
-                  <View style={styles.inputContainer}>
-                    <TextInput
-                      style={styles.input}
-                      keyboardType="numeric"
-                      value={formData.phosphorous}
-                      onChangeText={(text) => handleInputChange('phosphorous', text)}
-                      placeholder="0.0"
-                    />
-                  </View>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.phosphorous}
+                    onChangeText={(text) => handleInputChange('phosphorous', text)}
+                    placeholder="0.0"
+                  />
                 </View>
                 
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>Potassium (K)</Text>
-                  <View style={styles.inputContainer}>
-                    <TextInput
-                      style={styles.input}
-                      keyboardType="numeric"
-                      value={formData.potassium}
-                      onChangeText={(text) => handleInputChange('potassium', text)}
-                      placeholder="0.0"
-                    />
-                  </View>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.potassium}
+                    onChangeText={(text) => handleInputChange('potassium', text)}
+                    placeholder="0.0"
+                  />
                 </View>
               </View>
             </View>
 
-            {/* Environmental Factors */}
+            {/* Environmental Factors - SIMPLIFIED */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Icon name="cloud" size={18} color="#5D9C59" style={styles.sectionIcon} />
                 <Text style={styles.sectionTitle}>Environmental Conditions</Text>
+                {routeParams.temperature && (
+                  <View style={styles.autoFilledBadge}>
+                    <Text style={styles.autoFilledText}>Auto-filled</Text>
+                  </View>
+                )}
               </View>
-              <Text style={styles.sectionDescription}>Enter your local conditions</Text>
+              <Text style={styles.sectionDescription}>Your local conditions</Text>
               
               <View style={styles.inputRow}>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Temp (°C)</Text>
-                  <View style={styles.inputContainer}>
-                    <TextInput
-                      style={styles.input}
-                      keyboardType="numeric"
-                      value={formData.temperature}
-                      onChangeText={(text) => handleInputChange('temperature', text)}
-                      placeholder="0.0"
-                    />
-                    <Text style={styles.inputUnit}>°C</Text>
-                  </View>
+                  <Text style={styles.inputLabel}>Temperature</Text>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.temperature}
+                    onChangeText={(text) => handleInputChange('temperature', text)}
+                    placeholder="0.0"
+                  />
                 </View>
                 
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Humidity (%)</Text>
-                  <View style={styles.inputContainer}>
-                    <TextInput
-                      style={styles.input}
-                      keyboardType="numeric"
-                      value={formData.humidity}
-                      onChangeText={(text) => handleInputChange('humidity', text)}
-                      placeholder="0-100"
-                    />
-                    <Text style={styles.inputUnit}>%</Text>
-                  </View>
+                  <Text style={styles.inputLabel}>Humidity</Text>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.humidity}
+                    onChangeText={(text) => handleInputChange('humidity', text)}
+                    placeholder="0-100"
+                  />
                 </View>
                 
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Moisture (%)</Text>
-                  <View style={styles.inputContainer}>
-                    <TextInput
-                      style={styles.input}
-                      keyboardType="numeric"
-                      value={formData.moisture}
-                      onChangeText={(text) => handleInputChange('moisture', text)}
-                      placeholder="0-100"
-                    />
-                    <Text style={styles.inputUnit}>%</Text>
-                  </View>
+                  <Text style={styles.inputLabel}>Moisture</Text>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formData.moisture}
+                    onChangeText={(text) => handleInputChange('moisture', text)}
+                    placeholder="0-100"
+                  />
                 </View>
               </View>
             </View>
 
-            {/* Submit Button */}
-            <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+            {/* Action Buttons */}
+            <View style={styles.actionButtons}>
               <TouchableOpacity
                 style={styles.submitButton}
                 onPress={getRecommendation}
@@ -530,12 +641,21 @@ const FertilizerRecommendationScreen = ({ route }) => {
                   ) : (
                     <View style={styles.buttonContent}>
                       <Icon name="search" size={18} color="white" />
-                      <Text style={styles.submitButtonText}>Get Recommendation</Text>
+                      <Text style={styles.submitButtonText}>Get Fertilizer</Text>
                     </View>
                   )}
                 </LinearGradient>
               </TouchableOpacity>
-            </Animated.View>
+
+              <TouchableOpacity
+                style={styles.clearButton}
+                onPress={clearForm}
+                activeOpacity={0.8}
+              >
+                <Icon name="refresh" size={16} color="#6c757d" />
+                <Text style={styles.clearButtonText}>Clear</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Results Section */}
@@ -543,6 +663,9 @@ const FertilizerRecommendationScreen = ({ route }) => {
             <View style={styles.resultsContainer}>
               <View style={styles.resultsHeader}>
                 <Text style={styles.resultsTitle}>Recommended Fertilizer</Text>
+                <View style={styles.confidenceBadge}>
+                  <Text style={styles.confidenceText}>AI Recommended</Text>
+                </View>
               </View>
               
               <View style={[styles.cropCard, styles.topCropCard]}>
@@ -579,24 +702,19 @@ const FertilizerRecommendationScreen = ({ route }) => {
                   <Icon name="calendar" size={16} color="#6c757d" />
                   <Text style={styles.infoText}>{recommendation.application}</Text>
                 </View>
-                
-                <TouchableOpacity style={styles.learnMoreButton}>
-                  <Text style={styles.learnMoreText}>Learn more about application</Text>
-                  <Icon name="arrow-right" size={14} color="#5D9C59" />
-                </TouchableOpacity>
               </View>
             </View>
           )}
 
           {/* Error Message */}
           {error && (
-            <Animated.View style={styles.errorContainer}>
+            <View style={styles.errorContainer}>
               <Icon name="exclamation-circle" size={18} color="#D32F2F" />
               <Text style={styles.errorText}>{error}</Text>
               <TouchableOpacity onPress={() => setError(null)}>
                 <Icon name="times" size={16} color="#D32F2F" />
               </TouchableOpacity>
-            </Animated.View>
+            </View>
           )}
         </Animated.ScrollView>
       </LinearGradient>
@@ -616,7 +734,7 @@ const styles = StyleSheet.create({
     paddingBottom: 40
   },
   header: {
-    marginBottom: 24,
+    marginBottom: 16,
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between'
@@ -647,6 +765,33 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginLeft: 6,
   },
+  prefilledBanner: {
+    backgroundColor: '#5D9C59',
+    padding: 12,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  prefilledText: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 14,
+    marginLeft: 8,
+  },
+  debugButton: {
+    backgroundColor: '#FF6B35',
+    padding: 8,
+    borderRadius: 8,
+    alignSelf: 'flex-end',
+    marginBottom: 8,
+  },
+  debugButtonText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+  },
   formCard: {
     backgroundColor: 'white',
     borderRadius: 20,
@@ -673,6 +818,18 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#1A3C40',
+    flex: 1,
+  },
+  autoFilledBadge: {
+    backgroundColor: '#E3F2FD',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  autoFilledText: {
+    color: '#1976D2',
+    fontWeight: '600',
+    fontSize: 10,
   },
   sectionDescription: {
     fontSize: 13,
@@ -726,31 +883,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  input: {
     backgroundColor: '#FAFAFA',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#EEEEEE',
-    overflow: 'hidden',
-  },
-  input: {
-    flex: 1,
     padding: 14,
     fontSize: 16,
     color: '#1A3C40',
     fontWeight: '500',
   },
-  inputUnit: {
-    paddingHorizontal: 14,
-    color: '#6c757d',
-    fontWeight: '500',
+  actionButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   submitButton: {
     borderRadius: 14,
     overflow: 'hidden',
-    marginTop: 8,
+    flex: 1,
     shadowColor: '#5D9C59',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.2,
@@ -773,6 +924,21 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     letterSpacing: 0.5,
   },
+  clearButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    backgroundColor: 'white',
+  },
+  clearButtonText: {
+    color: '#6c757d',
+    fontWeight: '600',
+    fontSize: 14,
+    marginLeft: 6,
+  },
   resultsContainer: {
     backgroundColor: 'white',
     borderRadius: 20,
@@ -794,13 +960,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#1A3C40',
   },
-  resultsCount: {
+  confidenceBadge: {
     backgroundColor: '#E8F5E9',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
   },
-  resultsCountText: {
+  confidenceText: {
     color: '#5D9C59',
     fontWeight: '700',
     fontSize: 12,
@@ -842,49 +1008,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1A3C40',
   },
-  confidenceBadge: {
-    backgroundColor: '#E8F5E9',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  confidenceText: {
-    color: '#5D9C59',
-    fontWeight: '800',
-    fontSize: 14,
-  },
-  cropDescription: {
-    color: '#6c757d',
-    lineHeight: 22,
-    marginBottom: 12,
-    fontSize: 14,
-  },
-  detailsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-end',
-  },
-  detailsButtonText: {
-    color: '#5D9C59',
-    fontWeight: '600',
-    fontSize: 14,
-    marginRight: 4,
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFEBEE',
-    padding: 16,
-    borderRadius: 12,
-    marginTop: 16,
-    justifyContent: 'space-between',
-  },
-  errorText: {
-    color: '#D32F2F',
-    marginLeft: 10,
-    flex: 1,
-    fontWeight: '500',
-  },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -918,17 +1041,20 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 8,
   },
-  learnMoreButton: {
+  errorContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-end',
-    marginTop: 12,
+    backgroundColor: '#FFEBEE',
+    padding: 16,
+    borderRadius: 12,
+    marginTop: 16,
+    justifyContent: 'space-between',
   },
-  learnMoreText: {
-    color: '#5D9C59',
-    fontWeight: '600',
-    fontSize: 14,
-    marginRight: 6,
+  errorText: {
+    color: '#D32F2F',
+    marginLeft: 10,
+    flex: 1,
+    fontWeight: '500',
   },
 });
 
