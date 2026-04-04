@@ -1,0 +1,30 @@
+# Experiment: ResNet-50 baseline (classification)
+# Targets: N, P, K  (Low / Medium / High)
+# This is the recommended starting experiment for new contributors.
+
+name: baseline_resnet50
+
+data:
+  targets: [n, p, k]
+  task: classification
+  img_size: 224
+  val_split: 0.15
+  test_split: 0.10
+  seed: 42
+
+model:
+  backbone: resnet50
+  pretrained: true
+  dropout: 0.3
+  num_classes: 3
+
+train:
+  batch_size: 8         # reduced from 16; other GPU processes consume ~630MB of the 4GB
+  epochs: 50
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  num_workers: 1        # 1 worker prefetches on Windows spawn without exhausting RAM
+  scheduler: cosine
+  early_stopping_patience: 10
+  amp: true
+  label_smoothing: 0.1

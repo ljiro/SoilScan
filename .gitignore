@@ -1,0 +1,8 @@
+node_modules
+
+# Data — large image dataset, not tracked in git
+SoilScan/data/
+
+# ML outputs
+SoilScan/checkpoints/
+SoilScan/runs/

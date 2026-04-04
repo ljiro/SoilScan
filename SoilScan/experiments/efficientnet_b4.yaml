@@ -1,0 +1,30 @@
+# Experiment: EfficientNet-B4 (classification)
+# Higher capacity backbone; typically achieves better accuracy at the cost of
+# longer training time and more VRAM (~6 GB recommended).
+
+name: efficientnet_b4
+
+data:
+  targets: [n, p, k]
+  task: classification
+  img_size: 224        # 380 (native) OOMs on 4 GB VRAM; 224 fits within budget
+  val_split: 0.15
+  test_split: 0.10
+  seed: 42
+
+model:
+  backbone: efficientnet_b4
+  pretrained: true
+  dropout: 0.4
+  num_classes: 3
+
+train:
+  batch_size: 8         # 4 GB VRAM — keep small for safety with AMP
+  epochs: 60
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  num_workers: 2        # Windows spawn overhead; 2 is optimal for 1650
+  scheduler: cosine
+  early_stopping_patience: 12
+  amp: true
+  label_smoothing: 0.1

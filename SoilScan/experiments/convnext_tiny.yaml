@@ -1,0 +1,29 @@
+# Experiment: ConvNeXt-Tiny (classification)
+# Modern pure-convolutional architecture; strong accuracy/compute trade-off.
+
+name: convnext_tiny
+
+data:
+  targets: [n, p, k]
+  task: classification
+  img_size: 224
+  val_split: 0.15
+  test_split: 0.10
+  seed: 42
+
+model:
+  backbone: convnext_tiny
+  pretrained: true
+  dropout: 0.5
+  num_classes: 3
+
+train:
+  batch_size: 8
+  epochs: 50
+  lr: 2.0e-4
+  weight_decay: 5.0e-5
+  num_workers: 1
+  scheduler: cosine
+  early_stopping_patience: 10
+  amp: true
+  label_smoothing: 0.1
