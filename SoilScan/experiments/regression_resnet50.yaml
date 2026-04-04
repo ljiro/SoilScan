@@ -1,0 +1,30 @@
+# Experiment: ResNet-50 regression baseline
+# Treats N, P, K, and pH as continuous regression targets.
+# Useful if ordinal class labels are later replaced with precise lab measurements.
+
+name: regression_resnet50
+
+data:
+  targets: [n, p, k, ph]   # include pH as a fourth regression target
+  task: regression
+  img_size: 224
+  val_split: 0.15
+  test_split: 0.10
+  seed: 42
+
+model:
+  backbone: resnet50
+  pretrained: true
+  dropout: 0.3
+  # num_classes is unused in regression mode
+
+train:
+  batch_size: 16
+  epochs: 50
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  num_workers: 2        # Windows spawn overhead
+  scheduler: cosine
+  early_stopping_patience: 10
+  amp: true
+  label_smoothing: 0.0   # not applicable; ignored in regression mode
