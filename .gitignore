@@ -1,8 +1,10 @@
-node_modules
+node_modules/
+app.json
+.expo/
 
 # Data — large image dataset, not tracked in git
-SoilScan/data/
+data/
 
 # ML outputs
-SoilScan/checkpoints/
-SoilScan/runs/
+checkpoints/
+runs/
