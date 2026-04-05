@@ -32,7 +32,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 @dataclass
 class PathConfig:
     """All file-system paths used by the pipeline."""
-    data_dir: Path = ROOT_DIR / "data" / "augmented-atok-test-sample"
+    data_dir: Path = ROOT_DIR / "data"
     datamap_csv: Path = ROOT_DIR / "datamaps" / "uuid_mapping_report.csv"
     checkpoint_dir: Path = ROOT_DIR / "checkpoints"
     log_dir: Path = ROOT_DIR / "runs"           # TensorBoard logs

@@ -23,6 +23,7 @@ import argparse
 import logging
 import random
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -347,8 +348,12 @@ def main(cfg: ExperimentConfig) -> None:
     log.info(f"TensorBoard logs → {log_dir}")
 
     # --- Checkpointing ---
-    cfg.paths.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    best_path = cfg.paths.checkpoint_dir / f"{cfg.name}_best.pt"
+    # Each run gets its own subdirectory so previous checkpoints are never overwritten
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_ckpt_dir = cfg.paths.checkpoint_dir / f"{cfg.name}_{run_timestamp}"
+    run_ckpt_dir.mkdir(parents=True, exist_ok=True)
+    best_path = run_ckpt_dir / "best.pt"
+    log.info(f"Checkpoints → {run_ckpt_dir}")
 
     best_val_loss = float("inf")
     epochs_no_improve = 0
