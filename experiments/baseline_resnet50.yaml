@@ -4,6 +4,9 @@
 
 name: baseline_resnet50
 
+paths:
+  checkpoint_dir: D:/SoilScan_checkpoints
+
 data:
   targets: [n, p, k]
   task: classification
@@ -19,11 +22,11 @@ model:
   num_classes: 3
 
 train:
-  batch_size: 8         # reduced from 16; other GPU processes consume ~630MB of the 4GB
+  batch_size: 16        # ~3.5GB VRAM with AMP; drop to 12 if CUDA OOM occurs
   epochs: 50
   lr: 3.0e-4
   weight_decay: 1.0e-4
-  num_workers: 1        # 1 worker prefetches on Windows spawn without exhausting RAM
+  num_workers: 1        # 1 worker; needs C: to have >8GB free for Windows paging file
   scheduler: cosine
   early_stopping_patience: 10
   amp: true
