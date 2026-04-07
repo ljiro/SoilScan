@@ -18,16 +18,16 @@ data:
 model:
   backbone: resnet50
   pretrained: true
-  dropout: 0.3
+  dropout: 0.4
   num_classes: 3
 
 train:
   batch_size: 16        # ~3.5GB VRAM with AMP; drop to 12 if CUDA OOM occurs
   epochs: 50
-  lr: 3.0e-4
-  weight_decay: 1.0e-4
+  lr: 1.0e-4
+  weight_decay: 5.0e-4
   num_workers: 1        # 1 worker; needs C: to have >8GB free for Windows paging file
   scheduler: cosine
-  early_stopping_patience: 10
+  early_stopping_patience: 15
   amp: true
   label_smoothing: 0.1
