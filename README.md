@@ -18,9 +18,10 @@ SoilScan is a research-grade deep learning pipeline for predicting soil nutrient
 8. [TensorBoard Monitoring](#tensorboard-monitoring)
 9. [Architecture Overview](#architecture-overview)
 10. [Results](#results)
-11. [Project Structure](#project-structure)
-12. [Citation](#citation)
-13. [Acknowledgements](#acknowledgements)
+11. [Troubleshooting](#troubleshooting)
+12. [Project Structure](#project-structure)
+13. [Citation](#citation)
+14. [Acknowledgements](#acknowledgements)
 
 ---
 
@@ -105,6 +106,21 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+### CUDA Installation (Windows, GTX 1650 / 4 GB VRAM)
+
+CPU training is impractical (approximately 50 minutes per epoch). A CUDA-capable GPU is strongly recommended.
+
+If PyTorch was installed from `requirements.txt` without CUDA support, replace it with the CUDA 12.4 build:
+
+```bash
+# Run this as Administrator if Python is installed in Program Files
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+```
+
+> **Windows note:** If your Python installation lives under `C:\Program Files`, pip will require an elevated (Administrator) terminal to write to that directory. Open PowerShell or Command Prompt as Administrator before running the above command.
+
+All experiment configs are pre-tuned for a 4 GB GPU: `batch_size` is capped at 8–16, `num_workers` is set to 2, and AMP is enabled everywhere. Do not disable AMP (`amp: false`) on this hardware.
+
 The `requirements.txt` installs the following core packages:
 
 | Package         | Version   | Purpose                                         |
@@ -128,17 +144,26 @@ The `requirements.txt` installs the following core packages:
 
 ## Quick Start
 
-The following four commands train the baseline ResNet-50 classification model, evaluate it on the held-out test set, and run inference on a single image.
+The following commands train the baseline ResNet-50 classification model, evaluate it on the held-out test set, and run inference on a single image.
 
 ```bash
+# 0. Verify the pipeline (5 batches — fast sanity check)
+python train/smoke_test.py
+
 # 1. Train with the baseline ResNet-50 experiment config
 python train/train.py --config experiments/baseline_resnet50.yaml
+# Checkpoint saved to: checkpoints/baseline_resnet50_YYYYMMDD_HHMMSS/best.pt
 
-# 2. Evaluate the saved checkpoint on the test set
-python train/evaluate.py --config experiments/baseline_resnet50.yaml
+# 2. Evaluate the saved checkpoint on the test set (use the timestamped path from step 1)
+python train/evaluate.py \
+    --config experiments/baseline_resnet50.yaml \
+    --checkpoint checkpoints/baseline_resnet50_20240315_103045/best.pt
 
 # 3. Run inference on a single field photograph
-python train/inference.py --image path/to/soil_photo.jpg --config experiments/baseline_resnet50.yaml
+python train/inference.py \
+    --image path/to/soil_photo.jpg \
+    --config experiments/baseline_resnet50.yaml \
+    --checkpoint checkpoints/baseline_resnet50_20240315_103045/best.pt
 
 # 4. (Optional) Launch TensorBoard to monitor training
 tensorboard --logdir runs/
@@ -203,11 +228,11 @@ python train/config.py experiments/efficientnet_b4.yaml
 
 | Key                       | Type   | Default    | Description                                                        |
 |---------------------------|--------|------------|--------------------------------------------------------------------|
-| `batch_size`              | int    | `32`       | Mini-batch size.                                                   |
+| `batch_size`              | int    | `16`       | Mini-batch size.                                                   |
 | `epochs`                  | int    | `50`       | Maximum number of training epochs.                                 |
 | `lr`                      | float  | `3e-4`     | Initial learning rate for AdamW.                                   |
 | `weight_decay`            | float  | `1e-4`     | L2 regularisation coefficient.                                     |
-| `num_workers`             | int    | `4`        | DataLoader worker processes.                                       |
+| `num_workers`             | int    | `2`        | DataLoader worker processes.                                       |
 | `scheduler`               | string | `"cosine"` | LR scheduler: `"cosine"`, `"step"`, or `"plateau"`.               |
 | `step_size`               | int    | `15`       | Epoch interval for StepLR decay (used when `scheduler = "step"`). |
 | `patience`                | int    | `7`        | ReduceLROnPlateau patience (used when `scheduler = "plateau"`).   |
@@ -238,6 +263,20 @@ python train/config.py experiments/efficientnet_b4.yaml
 
 ## Training
 
+### Smoke Test
+
+Before committing to a full training run, verify the pipeline end-to-end with the smoke test script. It runs exactly 5 batches through the full forward-pass, backward-pass, and metric computation cycle:
+
+```bash
+# Smoke-test the default config
+python train/smoke_test.py
+
+# Smoke-test a specific experiment
+python train/smoke_test.py --config experiments/convnext_tiny.yaml
+```
+
+If the smoke test passes without error, the dataset, model, and loss configuration are all wired up correctly.
+
 ### Basic Usage
 
 ```bash
@@ -247,14 +286,18 @@ python train/train.py
 # Specific experiment
 python train/train.py --config experiments/efficientnet_b4.yaml
 
-# Override epochs for a quick smoke test
+# Override number of epochs without editing the YAML
 python train/train.py --config experiments/baseline_resnet50.yaml --epochs 2
 ```
 
 ### Training Behaviour
 
 - The optimiser is **AdamW** with the learning rate and weight decay specified in the config.
-- The **best checkpoint** (by validation loss) is saved automatically to `checkpoints/{name}_best.pt`.
+- Each training run creates a **timestamped subdirectory** under `checkpoint_dir` and saves the best checkpoint there:
+  ```
+  checkpoints/{name}_{YYYYMMDD_HHMMSS}/best.pt
+  ```
+  For example: `checkpoints/baseline_resnet50_20240315_103045/best.pt`. Each run is isolated, so restarting training never overwrites a previous best checkpoint.
 - **Early stopping** halts training if validation loss does not improve within `early_stopping_patience` epochs.
 - **AMP** (automatic mixed-precision with `torch.cuda.amp`) is enabled by default when a CUDA device is available, and is a no-op on CPU.
 - Metrics are printed to stdout each epoch in a tabular format and logged to TensorBoard.
@@ -273,19 +316,19 @@ python train/train.py --config experiments/baseline_resnet50.yaml --epochs 2
 Evaluate a saved checkpoint on the held-out test set:
 
 ```bash
-# Evaluate best checkpoint for a given experiment
-python train/evaluate.py --config experiments/baseline_resnet50.yaml
-
-# Evaluate a specific checkpoint file
+# Evaluate a specific checkpoint (recommended — supply the full timestamped path)
 python train/evaluate.py \
-    --config experiments/efficientnet_b4.yaml \
-    --checkpoint checkpoints/efficientnet_b4_best.pt
+    --config experiments/baseline_resnet50.yaml \
+    --checkpoint checkpoints/baseline_resnet50_20240315_103045/best.pt
 
 # Save per-sample predictions to CSV for downstream analysis
 python train/evaluate.py \
     --config experiments/baseline_resnet50.yaml \
+    --checkpoint checkpoints/baseline_resnet50_20240315_103045/best.pt \
     --save-preds results/test_predictions.csv
 ```
+
+> **Checkpoint path:** Each training run saves its best checkpoint to a timestamped subdirectory (`checkpoints/{name}_{YYYYMMDD_HHMMSS}/best.pt`). Always pass `--checkpoint` explicitly so the evaluator loads the correct run. The `checkpoint_dir` setting in the YAML is used as the root — the baseline config redirects this to `D:/SoilScan_checkpoints/` to avoid filling the system drive.
 
 The evaluation script reproduces the same UUID-aware split as training (using the same seed), ensuring the test set is identical to what was held out during training.
 
@@ -344,13 +387,13 @@ If `--save` is omitted, predictions are printed to stdout as a formatted table.
 
 ### Specifying a Checkpoint
 
-By default, inference loads `checkpoints/{name}_best.pt` where `{name}` is the experiment name from the config file. To override:
+Each training run saves its best checkpoint to a timestamped subdirectory. Pass the full path via `--checkpoint`:
 
 ```bash
 python train/inference.py \
     --image soil.jpg \
     --config experiments/efficientnet_b4.yaml \
-    --checkpoint checkpoints/efficientnet_b4_best.pt
+    --checkpoint checkpoints/efficientnet_b4_20240315_103045/best.pt
 ```
 
 ### Programmatic Use
@@ -488,6 +531,19 @@ All results are reported on the held-out test set (10% of unique UUIDs, seed=42)
 
 ---
 
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `UnicodeEncodeError: 'charmap' codec can't encode character` | Windows cp1252 terminal encoding; non-ASCII characters in a `print()` call | Set `PYTHONIOENCODING=utf-8` in your terminal, or avoid non-ASCII characters (arrows, checkmarks) in any added print statements |
+| `UserWarning: pin_memory=True but no CUDA` | CPU-only PyTorch build | Harmless warning; install the CUDA build of PyTorch to silence it |
+| `oneDNN custom operations are on` TensorFlow messages at startup | TensorBoard pulls in TensorFlow which prints its own startup messages | Run `set TF_ENABLE_ONEDNN_OPTS=0` (Windows) or `export TF_ENABLE_ONEDNN_OPTS=0` (Linux/Mac) before starting training |
+| `CUDA out of memory` | `batch_size` too large for 4 GB VRAM | Reduce `batch_size` in your YAML (try 12, then 8); do not disable `amp` |
+| `PermissionError` during `pip install torch` | Python installed under `C:\Program Files` | Re-run pip in an Administrator terminal |
+| Two simultaneous `pip install` commands conflict | Windows file lock on `torch._C.pyd` | Run pip commands one at a time |
+
+---
+
 ## Project Structure
 
 ```
@@ -515,7 +571,7 @@ SoilScan/
 │   ├── train.py       # main training loop: AMP, early stopping, TensorBoard, checkpointing
 │   ├── evaluate.py    # checkpoint evaluation on test set + optional CSV export
 │   └── inference.py   # SoilPredictor class + CLI for single image or folder
-├── checkpoints/       # auto-created; stores best checkpoint per experiment ({name}_best.pt)
+├── checkpoints/       # auto-created; one timestamped subdirectory per run ({name}_{timestamp}/best.pt)
 ├── runs/              # TensorBoard event files, one subdirectory per experiment
 └── requirements.txt
 ```
@@ -527,12 +583,12 @@ SoilScan/
 If you use SoilScan or the associated dataset in your research, please cite:
 
 ```bibtex
-@misc{soilscan2024,
-  author    = {TO BE FILLED},
+@misc{morales2024soilscan,
+  author    = {Morales, Liam},
   title     = {SoilScan: Deep Learning for Soil Nutrient Prediction from Field Photography},
   year      = {2024},
-  url       = {https://github.com/your-org/SoilScan},
-  note      = {TO BE FILLED}
+  url       = {https://github.com/LiamMorales/SoilScan},
+  note      = {Dataset collected in the Cordillera Administrative Region, Philippines}
 }
 ```
 
@@ -540,6 +596,6 @@ If you use SoilScan or the associated dataset in your research, please cite:
 
 ## Acknowledgements
 
-- **Dataset collection** was conducted in the Cordillera Administrative Region of the Philippines. The authors thank the farmers and local government units of Atok and La Trinidad, Benguet, for access and cooperation.
-- **Backbone implementations** are provided by [torchvision](https://github.com/pytorch/vision) and [timm](https://github.com/huggingface/pytorch-image-models).
-- TO BE FILLED: funding sources, institutional affiliations, and any additional collaborators.
+- **Dataset collection** was conducted in the Cordillera Administrative Region of the Philippines. The authors thank the farmers and local government units of Atok and La Trinidad, Benguet, for their cooperation and for granting access to their agricultural land.
+- **Backbone implementations** are provided by [torchvision](https://github.com/pytorch/vision) (ResNet-50) and [timm](https://github.com/huggingface/pytorch-image-models) (EfficientNet-B4, ConvNeXt-Tiny, ViT-B/16).
+- **Laboratory soil analysis** for the ground-truth nutrient labels (N, P, K, pH) was performed using standard agronomic methods on soil samples collected at each GPS-tagged capture site.
