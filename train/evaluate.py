@@ -144,7 +144,7 @@ def main(checkpoint_path: Path, cfg: ExperimentConfig, save_preds: Path | None):
 
     # --- Model ---
     model = build_model(cfg).to(device)
-    ckpt = torch.load(checkpoint_path, map_location=device)
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     # Handle checkpoints saved from the old single-model format
     state_key = "model_state" if "model_state" in ckpt else "state_dict"

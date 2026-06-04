@@ -81,7 +81,7 @@ class SoilPredictor:
             self.device = torch.device(device)
 
         self.model = build_model(self.cfg).to(self.device)
-        ckpt = torch.load(checkpoint_path, map_location=self.device)
+        ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         state_key = "model_state" if "model_state" in ckpt else "state_dict"
         self.model.load_state_dict(ckpt[state_key])
         self.model.eval()

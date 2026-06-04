@@ -145,7 +145,7 @@ def print_stats(
     target_names: list[str],
 ) -> None:
     """Print mean intra-class and inter-class similarities for every target."""
-    print("\n── Similarity statistics ───────────────────────────────────")
+    print("\n-- Similarity statistics --------------------------------------------")
     for t_idx, t_name in enumerate(target_names):
         cls_labels = labels[:, t_idx].astype(int)
         print(f"\n  Target: {t_name.upper()}")
@@ -165,7 +165,7 @@ def print_stats(
                     vals = sim[np.ix_(idx_i, idx_j)].flatten()
                 if len(vals) == 0:
                     continue
-                label = f"{CLASS_NAMES[ci]} ↔ {CLASS_NAMES[cj]}"
+                label = f"{CLASS_NAMES[ci]} vs {CLASS_NAMES[cj]}"
                 print(
                     f"  {label:<22}  {vals.mean():>7.4f}  {vals.std():>7.4f}"
                     f"  {len(vals):>8,}"
@@ -260,7 +260,7 @@ def plot_similarity_matrix(
 
     # Axis labels and title
     ax.set_xlabel(
-        f"Soil capture site  (sorted by {sort_by.upper()} class: Low → Medium → High)",
+        f"Soil capture site  (sorted by {sort_by.upper()} class: Low > Medium > High)",
         fontsize=10,
     )
     ax.set_ylabel(
@@ -341,7 +341,7 @@ def main() -> None:
 
     # ── Model ────────────────────────────────────────────────────────────
     model = build_model(cfg).to(device)
-    ckpt  = torch.load(args.checkpoint, map_location=device)
+    ckpt  = torch.load(args.checkpoint, map_location=device, weights_only=False)
     key   = "model_state" if "model_state" in ckpt else "state_dict"
     model.load_state_dict(ckpt[key])
     model.eval()
