@@ -17,11 +17,14 @@ SoilScan is a research-grade deep learning pipeline for predicting soil nutrient
 7. [Inference](#inference)
 8. [TensorBoard Monitoring](#tensorboard-monitoring)
 9. [Architecture Overview](#architecture-overview)
-10. [Results](#results)
-11. [Troubleshooting](#troubleshooting)
-12. [Project Structure](#project-structure)
-13. [Citation](#citation)
-14. [Acknowledgements](#acknowledgements)
+10. [Dataset Analysis](#dataset-analysis)
+11. [Results](#results)
+12. [Analysis Tools](#analysis-tools)
+13. [Findings](#findings)
+14. [Troubleshooting](#troubleshooting)
+15. [Project Structure](#project-structure)
+16. [Citation](#citation)
+17. [Acknowledgements](#acknowledgements)
 
 ---
 
@@ -508,6 +511,49 @@ Regression targets can include pH as a fourth output by setting `targets: [n, p,
 
 ---
 
+## Dataset Analysis
+
+### Label Distributions
+
+Computed from `datamaps/uuid_mapping_report.csv` (1,787 raw UUIDs → 1,756 after dropping rows with missing N/P/K labels).
+
+| Class | N count | N % | P count | P % | K count | K % |
+|-------|--------:|----:|--------:|----:|--------:|----:|
+| Low (0) | 1,624 | 92.5% | 695 | 39.6% | 815 | 46.4% |
+| Medium (1) | 132 | 7.5% | 371 | 21.1% | 705 | 40.1% |
+| High (2) | **0** | **0%** | 690 | 39.3% | 236 | 13.4% |
+
+> **Warning — N is critically imbalanced.** High-N does not exist in the dataset. A model that always predicts Low-N achieves 92.5% accuracy while learning nothing. Use macro F1 and Cohen's Kappa as primary metrics, not accuracy.
+
+### NPK Combination Map
+
+17 of 18 possible combinations are present (N has no High class; Medium-High-High is also absent). The top 5 combinations account for 75.5% of all sites.
+
+| N | P | K | Sites | % |
+|---|---|---|------:|--:|
+| Low | Low | Low | 340 | 19.4% |
+| Low | High | Low | 340 | 19.4% |
+| Low | High | Medium | 244 | 13.9% |
+| Low | Low | Medium | 215 | 12.2% |
+| Low | Medium | Medium | 187 | 10.6% |
+| Low | Medium | Low | 97 | 5.5% |
+| Low | High | High | 96 | 5.5% |
+| Low | Low | High | 70 | 4.0% |
+| Low | Medium | High | 35 | 2.0% |
+| Medium | Medium | Medium | 34 | 1.9% |
+| Medium | Low | High | 30 | 1.7% |
+| Medium | Low | Medium | 20 | 1.1% |
+| Medium | Low | Low | 20 | 1.1% |
+| Medium | Medium | Low | 13 | 0.7% |
+| Medium | Medium | High | 5 | 0.3% |
+| Medium | High | Low | 5 | 0.3% |
+| Medium | High | Medium | 5 | 0.3% |
+| Medium | High | High | **0** | **0%** |
+
+Full analysis including merge candidates and label simplification recommendations: [`results/README.md`](results/README.md)
+
+---
+
 ## Results
 
 > **Note:** The table below contains placeholder rows. Results will be populated as experiments are completed. Replace the placeholder values with actual test-set metrics.
@@ -528,6 +574,110 @@ Regression targets can include pH as a fourth output by setting `targets: [n, p,
 | `regression_resnet50`   | ResNet-50 | —     | —    | —     | —    | —     | —    | —      | —     |
 
 All results are reported on the held-out test set (10% of unique UUIDs, seed=42).
+
+---
+
+## Analysis Tools
+
+Two post-training analysis scripts are provided under `train/`. Both require a trained checkpoint and a matching config YAML.
+
+### `train/similarity_matrix.py` — Per-nutrient embedding similarity
+
+Extracts encoder embeddings from the test split (one image per UUID, no augmented variants) and plots a pairwise cosine-similarity heatmap sorted by nutrient class. Reveals whether same-class soil images cluster together in feature space.
+
+```bash
+# Sort by nitrogen class (default)
+python train/similarity_matrix.py \
+    --checkpoint checkpoints/baseline_resnet50_20260407_212414/best.pt \
+    --config experiments/baseline_resnet50.yaml
+
+# Sort by potassium, save to custom path
+python train/similarity_matrix.py \
+    --checkpoint checkpoints/... \
+    --config experiments/baseline_resnet50.yaml \
+    --sort-by k \
+    --output results/similarity/similarity_k.png
+```
+
+**Arguments:**
+
+| Argument | Default | Description |
+|---|---|---|
+| `--checkpoint` | required | Path to `.pt` checkpoint |
+| `--config` | None | YAML experiment config |
+| `--split` | `test` | Dataset split: `train`, `val`, or `test` |
+| `--sort-by` | first target | Nutrient to sort the matrix by (`n`, `p`, or `k`) |
+| `--batch-size` | 32 | Inference batch size |
+| `--output` | `similarity_{sort_by}.png` | Output PNG path |
+
+### `train/combo_similarity.py` — NPK combination similarity matrix
+
+Groups test-set embeddings by their full NPK combination triplet and computes mean pairwise cosine similarity between every pair of groups. Identifies which combinations are visually indistinguishable (merge candidates) and which are most separable.
+
+```bash
+python train/combo_similarity.py \
+    --checkpoint checkpoints/baseline_resnet50_20260407_212414/best.pt \
+    --config experiments/baseline_resnet50.yaml \
+    --output results/similarity/combo_similarity.png
+
+# Lower threshold to find more merge candidates
+python train/combo_similarity.py \
+    --checkpoint checkpoints/... \
+    --config experiments/... \
+    --threshold 0.40
+```
+
+**Arguments:**
+
+| Argument | Default | Description |
+|---|---|---|
+| `--checkpoint` | required | Path to `.pt` checkpoint |
+| `--config` | None | YAML experiment config |
+| `--split` | `test` | Dataset split |
+| `--batch-size` | 32 | Inference batch size |
+| `--threshold` | `0.45` | Mean similarity threshold for flagging merge candidates |
+| `--output` | `results/similarity/combo_similarity.png` | Output PNG path |
+
+---
+
+## Findings
+
+Findings below are based on `baseline_resnet50_20260407_212414/best.pt` evaluated on 154 unique test-split UUIDs. Full details and visualisations: [`results/README.md`](results/README.md)
+
+### Embedding Separability
+
+| Nutrient | Intra-class mean sim | Inter-class mean sim | Gap | Verdict |
+|---|---:|---:|---:|---|
+| K (Potassium) | 0.53 | 0.34 | **0.24** | Strongest visual signal |
+| P (Phosphorus) | 0.49 | 0.33 | **0.18** | Moderate signal |
+| N (Nitrogen) | 0.45 | 0.31 | **0.11** | Weakest — near-binary (no High class) |
+
+All targets show high within-group variance (std ~0.21–0.26), meaning the model has learned a real but noisy signal. Individual image predictions will be inconsistent; averaging across multiple shots of the same site significantly improves reliability.
+
+### Combination Indistinguishability
+
+From the 13×13 combination similarity matrix, **22 pairs** exceeded the 0.45 merge threshold. The dominant pattern:
+
+- **Any two combinations that differ only on P** → indistinguishable (P has no reliable visual signature)
+- **Any two combinations that differ only on N** → indistinguishable (N is near-absent from the visual signal)
+- **Combinations differing on K extremes** (Low vs High) → most separable (mean sim as low as 0.20)
+
+### Recommended Label Simplification
+
+Based on the embedding analysis, 17 combinations can be collapsed to **6 visually grounded groups** with near-balanced class sizes:
+
+| Simplified Group | Sites | % | Original combinations |
+|---|---:|---:|---|
+| Low-High-Low | 455 | 25.9% | Low-Med-Low, Low-High-Low, Med-Med-Low, Med-High-Low |
+| Low-Low-Low | 360 | 20.5% | Low-Low-Low, Med-Low-Low |
+| Low-High-Medium | 249 | 14.2% | Low-High-Med, Med-High-Med |
+| Low-Low-Medium | 235 | 13.4% | Low-Low-Med, Med-Low-Med |
+| Low-x-High | 236 | 13.4% | All K=High combinations (P collapsed) |
+| Low-Med-Medium | 221 | 12.6% | Low-Med-Med, Med-Med-Med |
+
+This reduces label space from 17 combinations to 6 classes with 13–26% each — a dramatic improvement over the original 92.5%/7.5% N split.
+
+See [`results/similarity/combo_table.png`](results/similarity/combo_table.png) for the full visualisation.
 
 ---
 
@@ -564,15 +714,25 @@ SoilScan/
 │   ├── vit_b16.yaml                   # ViT-B/16 classification
 │   └── regression_resnet50.yaml       # ResNet-50 regression (N, P, K, pH)
 ├── train/
-│   ├── config.py      # ExperimentConfig dataclass + YAML loader
-│   ├── dataset.py     # SoilDataset, build_dataloaders, uuid_aware_split
-│   ├── model.py       # build_model() registry and task head definitions
-│   ├── metrics.py     # MAE/RMSE/R² (regression), Accuracy/F1/Kappa (classification)
-│   ├── train.py       # main training loop: AMP, early stopping, TensorBoard, checkpointing
-│   ├── evaluate.py    # checkpoint evaluation on test set + optional CSV export
-│   └── inference.py   # SoilPredictor class + CLI for single image or folder
-├── checkpoints/       # auto-created; one timestamped subdirectory per run ({name}_{timestamp}/best.pt)
-├── runs/              # TensorBoard event files, one subdirectory per experiment
+│   ├── config.py             # ExperimentConfig dataclass + YAML loader
+│   ├── dataset.py            # SoilDataset, build_dataloaders, uuid_aware_split
+│   ├── model.py              # build_model() registry and task head definitions
+│   ├── metrics.py            # MAE/RMSE/R² (regression), Accuracy/F1/Kappa (classification)
+│   ├── train.py              # main training loop: AMP, early stopping, TensorBoard, checkpointing
+│   ├── evaluate.py           # checkpoint evaluation on test set + optional CSV export
+│   ├── inference.py          # SoilPredictor class + CLI for single image or folder
+│   ├── similarity_matrix.py  # per-nutrient encoder embedding similarity heatmap
+│   └── combo_similarity.py   # NPK combination pairwise similarity matrix + merge candidates
+├── results/
+│   ├── README.md             # master findings document (dataset analysis, embedding stats, recommendations)
+│   └── similarity/
+│       ├── similarity_n.png  # N-sorted embedding heatmap (154 test UUIDs)
+│       ├── similarity_p.png  # P-sorted embedding heatmap
+│       ├── similarity_k.png  # K-sorted embedding heatmap
+│       ├── combo_similarity.png  # 13x13 NPK combination similarity matrix
+│       └── combo_table.png   # combination consolidation table (17 -> 6 groups)
+├── checkpoints/              # auto-created; one timestamped subdirectory per run ({name}_{timestamp}/best.pt)
+├── runs/                     # TensorBoard event files, one subdirectory per experiment
 └── requirements.txt
 ```
 
