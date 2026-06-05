@@ -1,0 +1,10 @@
+node_modules/
+app.json
+.expo/
+
+# Data — large image dataset, not tracked in git
+data/
+
+# ML outputs
+checkpoints/
+runs/

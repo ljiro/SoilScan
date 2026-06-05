@@ -1,0 +1,30 @@
+# Experiment: Vision Transformer ViT-B/16 (classification)
+# Attention-based architecture; requires more data but achieves SOTA on many
+# image classification benchmarks. Use a lower LR and larger dropout.
+
+name: vit_b16
+
+data:
+  targets: [n, p, k]
+  task: classification
+  img_size: 224
+  val_split: 0.15
+  test_split: 0.10
+  seed: 42
+
+model:
+  backbone: vit_b16
+  pretrained: true
+  dropout: 0.5
+  num_classes: 3
+
+train:
+  batch_size: 8         # ViT-B has 86M params; batch 8 keeps AMP VRAM under 3 GB
+  epochs: 60
+  lr: 5.0e-5
+  weight_decay: 1.0e-4
+  num_workers: 2        # Windows spawn overhead
+  scheduler: cosine
+  early_stopping_patience: 15
+  amp: true
+  label_smoothing: 0.1
