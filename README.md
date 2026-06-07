@@ -125,4 +125,4 @@ Scan the QR code with Expo Go on your Android or iOS device.
 
 This project supports agricultural research in the **Cordillera Administrative Region, Philippines**. The primary study areas are Atok and La Trinidad, Benguet — highland vegetable-farming communities where soil health directly determines crop yields and food security.
 
-The goal is to replace or supplement expensive laboratory soil testing with a phone camera, making nutrient-level assessment accessible to individual farmers in the field.
+The goal is to replace or supplement expensive laboratory soil testing with a phone camera, for nutrient prediction, making nutrient-level assessment accessible to individual farmers in the field.
