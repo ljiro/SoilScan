@@ -85,7 +85,7 @@ The original SoilScan mobile app. A user points their phone camera at soil, and 
 
 ### Screenshots
 
-**Soil Image Classification** — upload or capture a photo to get soil texture, description,fertilizer, and properties.
+**Soil Image Classification** — upload or capture a photo to get soil texture, description, fertilizer, and properties.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/157204d5-6463-4590-804a-7e5e185a38ba" width="30%"/>
@@ -125,4 +125,4 @@ Scan the QR code with Expo Go on your Android or iOS device.
 
 This project supports agricultural research in the **Cordillera Administrative Region, Philippines**. The primary study areas are Atok and La Trinidad, Benguet — highland vegetable-farming communities where soil health directly determines crop yields and food security.
 
-The goal is to replace or supplement expensive laboratory soil testing with a phone camera, for nutrient prediction, making nutrient-level assessment accessible to individual farmers in the field.
+The goal is to replace or supplement expensive laboratory soil testing with a phone camera, making nutrient-level assessment accessible to individual farmers in the field.

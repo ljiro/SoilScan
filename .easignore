@@ -1,0 +1,11 @@
+data/
+checkpoints/
+runs/
+datamaps/
+experiments/
+train/
+results/
+.venv/
+__pycache__/
+*.pt
+*.pyc
